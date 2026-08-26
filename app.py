@@ -4,50 +4,67 @@ from sqlalchemy import create_engine
 import io
 
 st.set_page_config(page_title="BB Securities MTM", layout="wide")
-st.title("🇧🇩 Bangladesh Bank Securities Data (Latest Available)")
+st.title("🇧🇩 Bangladesh Bank Securities Data")
 
 # Connect to database
 engine = create_engine(st.secrets["DATABASE_URL"])
 
-# Category selection
+# Fetch available dates for history
+try:
+    dates_df = pd.read_sql('SELECT DISTINCT "Data_Date" FROM daily_securities ORDER BY "Data_Date" DESC', engine)
+    available_dates = dates_df["Data_Date"].tolist()
+except:
+    st.warning("No data found in the database yet.")
+    st.stop()
+
+# Sidebar or top choice for view mode
+view_mode = st.radio("Select View Mode", ["View Specific Date", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
+
 selected_cat = st.multiselect("Filter Category", ["T_Bonds", "T_Bills", "FRTB"], default=["T_Bonds", "T_Bills", "FRTB"])
 
 if selected_cat:
     cat_str = ','.join([f"'{c}'" for c in selected_cat])
     
-    # Query to get the latest data date for each selected category independently
-    query = f"""
-        SELECT * FROM daily_securities 
-        WHERE "Category" IN ({cat_str}) 
-        AND "Data_Date" IN (
-            SELECT MAX("Data_Date") 
-            FROM daily_securities 
-            WHERE "Category" IN ({cat_str})
-            GROUP BY "Category"
-        )
-    """
-    df = pd.read_sql(query, engine)
+    if view_mode == "View Specific Date":
+        selected_date = st.selectbox("Select Date", available_dates)
+        query = f'SELECT * FROM daily_securities WHERE "Data_Date" = \'{selected_date}\' AND "Category" IN ({cat_str})'
+        df = pd.read_sql(query, engine)
+        file_suffix = selected_date
+    else:
+        # Pulls the absolute latest available record for each category independently
+        query = f"""
+            SELECT * FROM daily_securities 
+            WHERE "Category" IN ({cat_str}) 
+            AND "Data_Date" IN (
+                SELECT MAX("Data_Date") 
+                FROM daily_securities 
+                WHERE "Category" IN ({cat_str})
+                GROUP BY "Category"
+            )
+        """
+        df = pd.read_sql(query, engine)
+        file_suffix = "Latest"
     
     if df.empty:
-        st.info("ℹ️ No data found in the database yet.")
+        st.info(f"ℹ️ No data available for the selected options.")
     else:
-        # Show which dates are being displayed
-        latest_dates = df[["Category", "Data_Date"]].drop_duplicates()
-        st.markdown("**Displaying latest available records per category:**")
-        st.dataframe(latest_dates, use_container_width=True, hide_index=True)
-        
-        st.markdown("---")
+        if view_mode == "View Latest Available per Category (Smart Fallback)":
+            st.markdown("##### 📅 Active Data Dates per Category:")
+            summary_dates = df[["Category", "Data_Date"]].drop_duplicates()
+            st.dataframe(summary_dates, use_container_width=True, hide_index=True)
+            st.markdown("---")
+            
         st.dataframe(df, use_container_width=True)
 
         # Download Button
         buffer = io.BytesIO()
         with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name="Latest_Securities", index=False)
+            df.to_excel(writer, sheet_name="Securities", index=False)
         
         st.download_button(
-            label="📥 Download Latest Data as Excel", 
+            label="📥 Download Current View as Excel", 
             data=buffer.getvalue(), 
-            file_name="BB_Securities_Latest.xlsx", 
+            file_name=f"BB_Securities_{file_suffix}.xlsx", 
             mime="application/vnd.ms-excel"
         )
 else:
