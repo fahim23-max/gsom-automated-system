@@ -1,44 +1,69 @@
 import os
-import io
-import pandas as pd
 import requests
-import urllib3
-from datetime import datetime
+import pandas as pd
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine
+from bs4 import BeautifulSoup
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Connect to Supabase with transaction pooler settings
+DATABASE_URL = os.environ.get("DATABASE_URL")
+engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-DB_URL = os.getenv("DATABASE_URL")
-if not DB_URL:
-    raise ValueError("DATABASE_URL is not set!")
-
-engine = engine = create_engine(DB_URL, connect_args={'prepare_threshold': None})
-
-urls = {
-    "T_Bonds": "https://gsom.bb.org.bd/index.php/tbond",
-    "T_Bills": "https://gsom.bb.org.bd/index.php/tbill",
-    "FRTB": "https://gsom.bb.org.bd/index.php/frtb"
-}
-
-headers = {"User-Agent": "Mozilla/5.0"}
-all_dfs = []
-today = datetime.now().strftime('%Y-%m-%d')
-
-for category, url in urls.items():
+def scrape_bb_securities(target_date):
+    date_str = target_date.strftime("%Y-%m-%d")
+    print(f"Scraping data for: {date_str}...")
+    
+    # URL for Bangladesh Bank GSOM portal (adjust endpoint if needed based on your current setup)
+    url = f"https://gsom.bb.org.bd/index.php/frtb?date={date_str}"
+    
     try:
-        res = requests.get(url, headers=headers, verify=False, timeout=20)
-        tables = pd.read_html(io.StringIO(res.text))
-        df = max(tables, key=len)
-        if 'Total Outstanding Balance' in str(df.iloc[-1].values):
-            df = df.iloc[:-1]
-        df['Category'] = category
-        all_dfs.append(df)
-        print(f"Scraped {category}")
+        response = requests.get(url, timeout=30)
+        if response.status_code != 200:
+            print(f"Failed to fetch {date_str}, status code: {response.status_code}")
+            return None
+            
+        # Parse tables using pandas
+        tables = pd.read_html(response.text)
+        if not tables:
+            print(f"No tables found for {date_str}")
+            return None
+            
+        # Combine or select the relevant tables for T_Bonds, T_Bills, FRTB
+        # (Assuming your tables parse into a consolidated DataFrame or list)
+        df_list = []
+        for i, table in enumerate(tables):
+            if len(table) > 1: # Basic check to ensure it's a data table
+                temp_df = table.copy()
+                temp_df["Data_Date"] = date_str
+                df_list.append(temp_df)
+                
+        if df_list:
+            final_df = pd.concat(df_list, ignore_index=True)
+            return final_df
+            
     except Exception as e:
-        print(f"Error scraping {category}: {e}")
+        print(f"Error scraping {date_str}: {e}")
+        
+    return None
 
-if all_dfs:
-    combined = pd.concat(all_dfs, ignore_index=True)
-    combined['Data_Date'] = today
-    combined.to_sql('daily_securities', engine, if_exists='append', index=False)
-    print(f"Successfully saved data for {today}")
+def run_backfill(start_date_str, end_date_str):
+    start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+    end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    
+    current_date = start_date
+    while current_date <= end_date:
+        # Skip weekends or holidays if desired, or try fetching anyway
+        df = scrape_bb_securities(current_date)
+        if df is not None and not df.empty:
+            try:
+                df.to_sql("daily_securities", engine, if_exists="append", index=False)
+                print(f"Successfully saved data for {current_date}")
+            except Exception as db_err:
+                print(f"Database save error for {current_date}: {db_err}")
+                
+        current_date += timedelta(days=1)
+
+if __name__ == "__main__":
+    # To run your one-time historical backfill from 2005-01-01 to today:
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    run_backfill("2005-01-01", today_str)
