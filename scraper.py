@@ -16,9 +16,8 @@ engine = create_engine(
     max_overflow=5,
 )
 
+# Test only T-Bills first
 CATEGORIES = {
-    "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
-    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond_mtm?date={date_str}",
     "T-Bill": "https://gsom.bb.org.bd/index.php/tbill_mtm?date={date_str}"
 }
 
@@ -109,6 +108,7 @@ def insert_records(records):
 
 async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=3):
     url = url_template.format(date_str=date_str)
+    extracted_date = date_str  # Force data date to strictly match searched date
 
     html_content = None
     for attempt in range(1, retries + 1):
@@ -126,7 +126,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
     soup = BeautifulSoup(html_content, 'html.parser')
 
     yield_date_div = soup.find(string=re.compile(r"Yield date:"))
-    extracted_date = date_str
     if yield_date_div:
         match = re.search(r"([0-9]{2}-[A-Z]{3}-[0-9]{2})", yield_date_div)
         if match:
@@ -136,6 +135,7 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
 
     table = soup.find("table", {"class": "table"})
     if not table or not table.find("tbody"):
+        print(f"DEBUG: No table found for {cat_name} on {date_str}", flush=True)
         return
 
     rows = table.find("tbody").find_all("tr")
@@ -147,6 +147,7 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
             records.append(rec)
 
     if not records:
+        print(f"DEBUG: Table found for {cat_name} on {date_str}, but 0 rows matched column length check. Total rows: {len(rows)}", flush=True)
         return
 
     try:
