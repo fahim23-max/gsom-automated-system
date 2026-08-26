@@ -8,9 +8,8 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# CONCURRENCY workers each hold their own DB connection at times, so give the
-# pool enough headroom. Same DB/engine setup as before, just sized correctly.
-CONCURRENCY = 10
+# Concurrency reduced to 3 to prevent overwhelming the Bangladesh Bank server
+CONCURRENCY = 3
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
@@ -47,7 +46,6 @@ def parse_bb_date(date_str):
 
 
 def parse_row(cat_name, cols, extracted_date):
-    """Same column-mapping logic as before, just factored out for reuse."""
     if cat_name == "T-Bill":
         if len(cols) < 10:
             return None
@@ -106,19 +104,18 @@ def parse_row(cat_name, cols, extracted_date):
 
 
 def insert_records(records):
-    """Blocking DB call — always run this via asyncio.to_thread so it doesn't
-    stall other workers' page loads while it waits on the DB."""
     with engine.begin() as conn:
         conn.execute(INSERT_SQL, records)
 
 
-async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=2):
+async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=3):
     url = url_template.format(date_str=date_str)
 
     html_content = None
     for attempt in range(1, retries + 1):
         try:
-            await page.goto(url, timeout=15000)
+            # Timeout increased to 30s to accommodate slower server responses
+            await page.goto(url, timeout=30000)
             await page.wait_for_load_state("domcontentloaded")
             html_content = await page.content()
             break
@@ -126,7 +123,7 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
             if attempt == retries:
                 print(f"FAILED {cat_name} {date_str}: {e}", flush=True)
                 return
-            await asyncio.sleep(1)
+            await asyncio.sleep(2)
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
