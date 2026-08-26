@@ -1,57 +1,61 @@
 import os
-import requests
+import asyncio
+from datetime import datetime, timedelta
 import pandas as pd
-from datetime import datetime
+from playwright.async_api import async_playwright
 from sqlalchemy import create_engine
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-def scrape_bb_securities(target_date):
-    date_str = target_date.strftime("%Y-%m-%d")
-    url = f"https://gsom.bb.org.bd/index.php/frtb?date={date_str}"
-    print(f"DEBUG: Trying to fetch URL -> {url}", flush=True)
-    
-    try:
-        response = requests.get(url, timeout=20)
-        print(f"DEBUG: Status Code Received: {response.status_code}", flush=True)
+async def scrape_historical_range():
+    async with async_playwright() as p:
+        # Launch headless browser
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
+        page = await context.new_page()
+
+        # Define date range to backfill (e.g., past 1 year or adjust as needed)
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=365)
         
-        if response.status_code != 200:
-            return None
-            
-        tables = pd.read_html(response.text)
-        print(f"DEBUG: Number of tables found: {len(tables)}", flush=True)
-        
-        if not tables:
-            return None
-            
-        df_list = []
-        for table in tables:
-            if len(table) > 1:
-                temp_df = table.copy()
-                temp_df["Data_Date"] = date_str
-                df_list.append(temp_df)
+        current_date = start_date
+        while current_date <= end_date:
+            # Skip weekends if needed or let the portal handle it
+            if current_date.weekday() in [5, 6]: # Friday/Saturday in Bangladesh or standard weekends
+                current_date += timedelta(days=1)
+                continue
                 
-        if df_list:
-            combined_df = pd.concat(df_list, ignore_index=True)
-            print(f"DEBUG: Parsed {len(combined_df)} rows successfully!", flush=True)
-            return combined_df
-    except Exception as e:
-        print(f"DEBUG: Error encountered -> {e}", flush=True)
-        
-    return None
+            date_str = current_date.strftime("%Y-%m-%d")
+            url = f"https://gsom.bb.org.bd/index.php/frtb?date={date_str}"
+            
+            try:
+                print(f"Fetching data for {date_str}...", flush=True)
+                await page.goto(url, timeout=30000)
+                await page.wait_for_load_state("networkidle")
+
+                # Extract tables using pandas read_html from the page content
+                html_content = await page.content()
+                tables = pd.read_html(html_content)
+
+                if tables:
+                    df_list = []
+                    for table in tables:
+                        if len(table) > 1:
+                            temp_df = table.copy()
+                            temp_df["Data_Date"] = date_str
+                            df_list.append(temp_df)
+                            
+                    if df_list:
+                        combined_df = pd.concat(df_list, ignore_index=True)
+                        combined_df.to_sql("daily_securities", engine, if_exists="append", index=False)
+                        print(f"SUCCESS: Saved {len(combined_df)} rows for {date_str}", flush=True)
+            except Exception as e:
+                print(f"No data or error for {date_str}: {e}", flush=True)
+
+            current_date += timedelta(days=1)
+
+        await browser.close()
 
 if __name__ == "__main__":
-    print("SCRIPT STARTED", flush=True)
-    test_date = datetime.strptime("2025-01-15", "%Y-%m-%d").date()
-    df = scrape_bb_securities(test_date)
-    
-    if df is not None and not df.empty:
-        try:
-            df.to_sql("daily_securities", engine, if_exists="append", index=False)
-            print("SUCCESS: Data written to Supabase!", flush=True)
-        except Exception as db_err:
-            print(f"DATABASE ERROR: {db_err}", flush=True)
-    else:
-        print("RESULT: No table data returned from Bangladesh Bank for this date.", flush=True)
-    print("SCRIPT FINISHED", flush=True)
+    asyncio.run(scrape_historical_range())
