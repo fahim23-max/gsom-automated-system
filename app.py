@@ -79,7 +79,6 @@ if selected_cat:
                 mat_mill = pd.to_numeric(maturing_soon["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
                 mat_val = mat_mill / 10.0
             
-            # Format values cleanly in Crore
             matrix_data[cat] = [
                 f"{count_val:,}",
                 f"BDT {outstand_val:,.2f} Cr",
@@ -103,16 +102,37 @@ if selected_cat:
             
         st.dataframe(df, use_container_width=True)
 
-        # Download Button
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-            df.to_excel(writer, sheet_name="Securities", index=False)
+        # --- DOWNLOAD OPTIONS (SINGLE DATE VS FULL HISTORY) ---
+        st.markdown("### 📥 Export Options")
+        col_dl1, col_dl2 = st.columns(2)
         
-        st.download_button(
-            label="📥 Download Detailed Data as Excel", 
-            data=buffer.getvalue(), 
-            file_name=f"BB_Securities_{file_suffix}.xlsx", 
-            mime="application/vnd.ms-excel"
-        )
+        with col_dl1:
+            # Download current view
+            buffer_current = io.BytesIO()
+            with pd.ExcelWriter(buffer_current, engine='openpyxl') as writer:
+                df.to_excel(writer, sheet_name="Securities", index=False)
+            
+            st.download_button(
+                label=f"📥 Download Current View ({file_suffix})", 
+                data=buffer_current.getvalue(), 
+                file_name=f"BB_Securities_{file_suffix}.xlsx", 
+                mime="application/vnd.ms-excel"
+            )
+            
+        with col_dl2:
+            # Download ALL historical data for selected categories across all dates
+            history_query = f'SELECT * FROM daily_securities WHERE "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
+            df_history = pd.read_sql(history_query, engine)
+            
+            buffer_history = io.BytesIO()
+            with pd.ExcelWriter(buffer_history, engine='openpyxl') as writer:
+                df_history.to_excel(writer, sheet_name="Full_History", index=False)
+                
+            st.download_button(
+                label="📥 Download Complete History (All Dates)", 
+                data=buffer_history.getvalue(), 
+                file_name="BB_Securities_Full_History.xlsx", 
+                mime="application/vnd.ms-excel"
+            )
 else:
     st.info("Please select at least one category.")
