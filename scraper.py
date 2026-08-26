@@ -12,7 +12,7 @@ DB_URL = os.getenv("DATABASE_URL")
 if not DB_URL:
     raise ValueError("DATABASE_URL is not set!")
 
-engine = create_engine(DB_URL)
+engine = engine = create_engine(DB_URL, connect_args={'prepare_threshold': None})
 
 urls = {
     "T_Bonds": "https://gsom.bb.org.bd/index.php/tbond",
