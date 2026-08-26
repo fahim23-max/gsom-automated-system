@@ -16,10 +16,9 @@ engine = create_engine(
     max_overflow=5,
 )
 
-# Focused entirely on T-Bonds and FRTBs
+# Focused entirely on T-Bonds to verify and stabilize data collection
 CATEGORIES = {
-    "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
-    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond_mtm?date={date_str}"
+    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}"
 }
 
 INSERT_SQL = text("""
@@ -85,14 +84,14 @@ def insert_records(records):
 
 async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=3):
     url = url_template.format(date_str=date_str)
-    extracted_date = date_str  # Force data date to strictly match searched date
+    extracted_date = date_str
 
-    html_content = None
     for attempt in range(1, retries + 1):
         try:
             await page.goto(url, timeout=30000)
             await page.wait_for_load_state("domcontentloaded")
             
+            # Wait for table rows to dynamically render
             try:
                 await page.wait_for_selector("table.table tbody tr", timeout=5000)
             except Exception:
@@ -118,6 +117,7 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
 
     table = soup.find("table", {"class": "table"})
     if not table or not table.find("tbody"):
+        print(f"DEBUG: No table found for {cat_name} on {date_str}", flush=True)
         return
 
     rows = table.find("tbody").find_all("tr")
@@ -129,6 +129,7 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
             records.append(rec)
 
     if not records:
+        print(f"DEBUG: Table found for {cat_name} on {date_str}, but 0 rows matched column length check. Total rows: {len(rows)}", flush=True)
         return
 
     try:
@@ -163,7 +164,7 @@ async def scrape_historical_range():
         context = await browser.new_context()
 
         end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=365 * 5)  # Expanded to 5 years
+        start_date = end_date - timedelta(days=365 * 5)  # 5-year test for T-Bonds
 
         queue = asyncio.Queue()
         current_date = start_date
@@ -176,7 +177,7 @@ async def scrape_historical_range():
                     task_count += 1
             current_date += timedelta(days=1)
 
-        print(f"Queued {task_count} (date, category) tasks for 5-year range with {CONCURRENCY} concurrent workers", flush=True)
+        print(f"Queued {task_count} T-Bond tasks with {CONCURRENCY} concurrent workers", flush=True)
 
         day_counts = {}
         workers = [
@@ -193,7 +194,7 @@ async def scrape_historical_range():
         await browser.close()
 
         total = sum(day_counts.values())
-        print(f"DONE: {total} total rows across {len(day_counts)} days with data", flush=True)
+        print(f"DONE: {total} total T-Bond rows across {len(day_counts)} days with data", flush=True)
 
 
 if __name__ == "__main__":
