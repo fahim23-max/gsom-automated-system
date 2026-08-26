@@ -16,9 +16,11 @@ engine = create_engine(
     max_overflow=5,
 )
 
-# Test only T-Bills first
+# Test with all categories enabled, using the correct T-Bill route
 CATEGORIES = {
-    "T-Bill": "https://gsom.bb.org.bd/index.php/tbills?date={date_str}"
+    "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
+    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond_mtm?date={date_str}",
+    "T-Bill": "https://gsom.bb.org.bd/index.php/tbill?date={date_str}"
 }
 
 INSERT_SQL = text("""
@@ -115,6 +117,13 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
         try:
             await page.goto(url, timeout=30000)
             await page.wait_for_load_state("domcontentloaded")
+            
+            # Explicitly wait for JavaScript to populate the data table rows
+            try:
+                await page.wait_for_selector("table.table tbody tr", timeout=5000)
+            except Exception:
+                pass  # Allow empty/missing tables to pass through gracefully
+
             html_content = await page.content()
             break
         except Exception as e:
@@ -135,7 +144,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
 
     table = soup.find("table", {"class": "table"})
     if not table or not table.find("tbody"):
-        print(f"DEBUG: No table found for {cat_name} on {date_str}", flush=True)
         return
 
     rows = table.find("tbody").find_all("tr")
@@ -147,7 +155,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
             records.append(rec)
 
     if not records:
-        print(f"DEBUG: Table found for {cat_name} on {date_str}, but 0 rows matched column length check. Total rows: {len(rows)}", flush=True)
         return
 
     try:
