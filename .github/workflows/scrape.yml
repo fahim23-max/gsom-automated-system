@@ -1,0 +1,25 @@
+name: Daily Scraper
+
+on:
+  schedule:
+    - cron: '0 12 * * *' # Runs every day at 05:00 UTC (11:00 AM BD time)
+  workflow_dispatch: # Allows you to click a button to run it manually
+
+jobs:
+  run-scraper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          
+      - name: Install packages
+        run: pip install -r requirements.txt
+        
+      - name: Run script
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python scraper.py
