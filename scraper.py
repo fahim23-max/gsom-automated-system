@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-CONCURRENCY = 4  # Slightly bumped up for faster processing
+CONCURRENCY = 6  # Slightly bumped up for faster processing
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
