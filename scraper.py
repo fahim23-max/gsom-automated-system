@@ -8,7 +8,6 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Concurrency set to 3 to keep the server stable and prevent timeouts
 CONCURRENCY = 3
 engine = create_engine(
     DATABASE_URL,
@@ -19,8 +18,8 @@ engine = create_engine(
 
 CATEGORIES = {
     "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
-    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}",
-    "T-Bill": "https://gsom.bb.org.bd/index.php/tbill?date={date_str}"
+    "T-Bond": "https://gsom.bb.org.bd/index.php/tbond_mtm?date={date_str}",
+    "T-Bill": "https://gsom.bb.org.bd/index.php/tbill_mtm?date={date_str}"
 }
 
 INSERT_SQL = text("""
@@ -47,8 +46,7 @@ def parse_bb_date(date_str):
 
 def parse_row(cat_name, cols, extracted_date):
     if cat_name == "T-Bill":
-        # T-Bills omit coupon columns, shifting indices accordingly
-        if len(cols) < 9:
+        if len(cols) < 11:
             return None
         sl_no = cols[0].get_text(strip=True)
         isin = cols[1].get_text(strip=True)
@@ -62,13 +60,13 @@ def parse_row(cat_name, cols, extracted_date):
         last_coupon = "-"
         next_coupon = "-"
 
-        issue_price = cols[6].get_text(strip=True) if len(cols) > 6 else "0"
-        rem_maturity = cols[7].get_text(strip=True) if len(cols) > 7 else "0"
-        market_yield = cols[8].get_text(strip=True) if len(cols) > 8 else "0"
-        market_price = cols[9].get_text(strip=True) if len(cols) > 9 else "0"
+        issue_price = cols[6].get_text(strip=True)
+        rem_maturity = cols[7].get_text(strip=True)
+        market_yield = cols[8].get_text(strip=True)
+        market_price = cols[9].get_text(strip=True)
 
         try:
-            outstanding_bdt = float(cols[10].get_text(strip=True).replace(",", "").strip()) if len(cols) > 10 else 0.0
+            outstanding_bdt = float(cols[10].get_text(strip=True).replace(",", "").strip())
         except Exception:
             outstanding_bdt = 0.0
     else:
