@@ -24,9 +24,9 @@ async def scrape_historical_range():
         page = await context.new_page()
 
         end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=30)  # Adjust days window as needed
+        start_date = end_date - timedelta(days=30)  # Adjust window as needed
         
-        # Define endpoints and their matching category tags
+        # Corrected category route mappings for Bangladesh Bank GSOM portal
         categories = {
             "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
             "T-Bond": "https://gsom.bb.org.bd/index.php/t_bond?date={date_str}",
@@ -115,8 +115,7 @@ async def scrape_historical_range():
                             total_inserted_for_day += 1
 
                 except Exception as e:
-                    # Silently catch route variations if any category page changes layout
-                    pass
+                    print(f"Error on {cat_name} for {date_str}: {e}", flush=True)
 
             if total_inserted_for_day > 0:
                 print(f"SUCCESS: Saved {total_inserted_for_day} total rows for {date_str}", flush=True)
