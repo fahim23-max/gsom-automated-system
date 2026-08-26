@@ -18,8 +18,8 @@ try:
     min_db_date = parsed_dates.min().date()
     max_db_date = parsed_dates.max().date()
 except Exception as e:
-    st.warning(f"No data found in the database yet or error reading dates: {e}")
-    st.stop()
+    min_db_date = date(2025, 1, 1)
+    max_db_date = date.today()
 
 # View mode and filters
 view_mode = st.radio("Select View Mode", ["View Specific Date", "View Date Range", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
@@ -35,14 +35,12 @@ if selected_cat:
         file_suffix = selected_date
         
     elif view_mode == "View Date Range":
-        # Safe default start date calculation
-        default_start = max(min_db_date, max_db_date - timedelta(days=7))
-        
+        # Unrestricted date pickers without min/max locks so you can freely type or select any range
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            start_d = st.date_input("Start Date", value=default_start, min_value=min_db_date, max_value=max_db_date)
+            start_d = st.date_input("Start Date", value=max_db_date - timedelta(days=7))
         with col_d2:
-            end_d = st.date_input("End Date", value=max_db_date, min_value=min_db_date, max_value=max_db_date)
+            end_d = st.date_input("End Date", value=max_db_date)
             
         query = f'SELECT * FROM daily_securities WHERE "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
         df = pd.read_sql(query, engine)
