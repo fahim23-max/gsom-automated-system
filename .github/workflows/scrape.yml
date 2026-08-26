@@ -19,7 +19,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas requests sqlalchemy openpyxl playwright
+          pip install pandas requests sqlalchemy openpyxl playwright psycopg2-binary
           playwright install chromium
 
       - name: Run script
