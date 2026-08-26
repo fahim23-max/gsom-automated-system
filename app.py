@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 import io
 
 st.set_page_config(page_title="BB Securities MTM", layout="wide")
-st.title("🇧🇩 Bangladesh Bank Securities Data")
+st.title("🇧🇩 Bangladesh Bank Securities Data Dashboard")
 
 # Connect to database
 engine = create_engine(st.secrets["DATABASE_URL"])
@@ -17,9 +17,8 @@ except:
     st.warning("No data found in the database yet.")
     st.stop()
 
-# Sidebar or top choice for view mode
+# View mode and filters
 view_mode = st.radio("Select View Mode", ["View Specific Date", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
-
 selected_cat = st.multiselect("Filter Category", ["T_Bonds", "T_Bills", "FRTB"], default=["T_Bonds", "T_Bills", "FRTB"])
 
 if selected_cat:
@@ -31,7 +30,6 @@ if selected_cat:
         df = pd.read_sql(query, engine)
         file_suffix = selected_date
     else:
-        # Pulls the absolute latest available record for each category independently
         query = f"""
             SELECT * FROM daily_securities 
             WHERE "Category" IN ({cat_str}) 
@@ -48,6 +46,30 @@ if selected_cat:
     if df.empty:
         st.info(f"ℹ️ No data available for the selected options.")
     else:
+        # --- EXECUTIVE SUMMARY METRICS ---
+        st.markdown("### 📊 Portfolio Summary")
+        
+        # Create columns dynamically based on selected categories
+        cols = st.columns(len(selected_cat))
+        
+        for idx, cat in enumerate(selected_cat):
+            cat_df = df[df["Category"] == cat]
+            count = len(cat_df)
+            
+            with cols[idx]:
+                st.metric(label=f"Total {cat} Instruments", value=count)
+                
+                # If there's a numeric column for amounts (like Outstanding/Volume), we can sum it up safely
+                numeric_cols = cat_df.select_dtypes(include=['number']).columns
+                if len(numeric_cols) > 0:
+                    # Picks the last numeric column or a likely size column as a proxy for total volume
+                    total_vol = cat_df[numeric_cols[-1]].sum()
+                    if total_vol > 0:
+                        st.caption(f"Total Volume / Metric: {total_vol:,.2f}")
+
+        st.markdown("---")
+
+        # Display Data Table
         if view_mode == "View Latest Available per Category (Smart Fallback)":
             st.markdown("##### 📅 Active Data Dates per Category:")
             summary_dates = df[["Category", "Data_Date"]].drop_duplicates()
