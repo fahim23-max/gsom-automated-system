@@ -20,7 +20,7 @@ except:
     st.warning("No data found in the database yet.")
     st.stop()
 
-# Sidebar or Top navigation for filters
+# View mode and filters
 view_mode = st.radio("Select View Mode", ["View Specific Date", "View Date Range", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
 selected_cat = st.multiselect("Filter Category", ["T_Bonds", "T_Bills", "FRTB"], default=["T_Bonds", "T_Bills", "FRTB"])
 
@@ -67,7 +67,7 @@ if selected_cat:
         if "Data_Date" in df.columns:
             df["Data_Date"] = pd.to_datetime(df["Data_Date"], errors='coerce')
 
-        # --- BUILD SUMMARY MATRIX (IN CRORE) ---
+        # --- BUILD SUMMARY MATRIX (IN CRORE) WITH STYLING ---
         st.markdown("### 📊 Portfolio Summary Matrix (Amounts in BDT Crore)")
         
         matrix_data = {"Metric": ["Count", "Outstanding", "Maturity in next 30 days"]}
@@ -98,8 +98,16 @@ if selected_cat:
                 f"BDT {mat_val:,.2f} Cr"
             ]
             
-        matrix_df = pd.DataFrame(matrix_data)
-        st.table(matrix_df.set_index("Metric"))
+        matrix_df = pd.DataFrame(matrix_data).set_index("Metric")
+        
+        # Apply professional styling (colored headers, dark text, subtle borders)
+        styled_matrix = matrix_df.style.set_table_styles([
+            {"selector": "th", "props": [("background-color", "#0e1117"), ("color", "white"), ("font-family", "sans-serif"), ("font-size", "15px"), ("text-align", "center"), ("padding", "10px")]},
+            {"selector": "td", "props": [("font-family", "sans-serif"), ("font-size", "14px"), ("text-align", "center"), ("padding", "8px"), ("border", "1px solid #e0e0e0")]},
+            {"selector": "th.row_heading", "props": [("background-color", "#f0f2f6"), ("color", "#262730"), ("font-weight", "bold")]}
+        ])
+        
+        st.markdown(styled_matrix.to_html(), unsafe_allow_html=True)
 
         st.markdown("---")
 
