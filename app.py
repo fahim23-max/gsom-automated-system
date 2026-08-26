@@ -6,7 +6,7 @@ import io
 st.set_page_config(page_title="BB Securities MTM", layout="wide")
 st.title("🇧🇩 Bangladesh Bank Securities Data Dashboard")
 
-# Connect to database using the stable transaction pooler arguments
+# Connect to database using transaction pooler settings
 engine = create_engine(st.secrets["DATABASE_URL"], connect_args={'prepare_threshold': None})
 
 # Fetch available dates for history
@@ -61,27 +61,27 @@ if selected_cat:
             cat_df = df[df["Category"] == cat]
             count_val = len(cat_df)
             
-            # Outstanding sum
+            # Outstanding sum using exact column name
             outstand_val = 0.0
-            if "Outstanding BDT" in cat_df.columns:
-                outstand_val = pd.to_numeric(cat_df["Outstanding BDT"].astype(str).str.replace(',', ''), errors='coerce').sum()
+            if "Outstanding BDT (in Mill)" in cat_df.columns and not cat_df.empty:
+                outstand_val = pd.to_numeric(cat_df["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
             
             # 30-day maturity sum
             mat_val = 0.0
-            if "Maturity/ Expiry Date" in cat_df.columns and not cat_df["Data_Date"].isna().all():
+            if "Maturity/ Expiry Date" in cat_df.columns and not cat_df["Data_Date"].isna().all() and "Outstanding BDT (in Mill)" in cat_df.columns:
                 base_date = cat_df["Data_Date"].max()
                 next_month_end = base_date + pd.Timedelta(days=30)
                 maturing_soon = cat_df[
                     (cat_df["Maturity/ Expiry Date"] >= base_date) & 
                     (cat_df["Maturity/ Expiry Date"] <= next_month_end)
                 ]
-                mat_val = pd.to_numeric(maturing_soon["Outstanding BDT"].astype(str).str.replace(',', ''), errors='coerce').sum()
+                mat_val = pd.to_numeric(maturing_soon["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
             
             # Format values cleanly
             matrix_data[cat] = [
                 f"{count_val:,}",
-                f"BDT {outstand_val:,.2f}",
-                f"BDT {mat_val:,.2f}"
+                f"{outstand_val:,.2f} Mill",
+                f"{mat_val:,.2f} Mill"
             ]
             
         matrix_df = pd.DataFrame(matrix_data)
@@ -89,7 +89,9 @@ if selected_cat:
 
         st.markdown("---")
 
-        # Display Data Table
+        # --- DETAILED SECURITY-WISE DATA TABLE ---
+        st.markdown("### 📋 Detailed Security-wise Data")
+        
         if view_mode == "View Latest Available per Category (Smart Fallback)":
             st.markdown("##### 📅 Active Data Dates per Category:")
             summary_dates = df[["Category", "Data_Date"]].drop_duplicates()
@@ -105,7 +107,7 @@ if selected_cat:
             df.to_excel(writer, sheet_name="Securities", index=False)
         
         st.download_button(
-            label="📥 Download Current View as Excel", 
+            label="📥 Download Detailed Data as Excel", 
             data=buffer.getvalue(), 
             file_name=f"BB_Securities_{file_suffix}.xlsx", 
             mime="application/vnd.ms-excel"
