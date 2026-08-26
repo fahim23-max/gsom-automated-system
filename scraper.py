@@ -18,7 +18,7 @@ engine = create_engine(
 
 # Test only T-Bills first
 CATEGORIES = {
-    "T-Bill": "https://gsom.bb.org.bd/index.php/tbill_mtm?date={date_str}"
+    "T-Bill": "https://gsom.bb.org.bd/index.php/tbill?date={date_str}"
 }
 
 INSERT_SQL = text("""
