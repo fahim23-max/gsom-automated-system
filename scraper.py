@@ -155,7 +155,7 @@ async def scrape_historical_range():
         context = await browser.new_context()
 
         end_date = datetime.now().date()
-        start_date = start_date = datetime.strptime("2022-06-01", "%Y-%m-%d").date()
+        start_date = start_date = datetime.strptime("2022-08-04", "%Y-%m-%d").date()
 
         queue = asyncio.Queue()
         current_date = start_date
