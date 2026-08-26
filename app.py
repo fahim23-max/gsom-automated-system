@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine
 import io
+from datetime import date, timedelta
 
 st.set_page_config(page_title="BB Securities MTM", layout="wide")
 st.title("🇧🇩 Bangladesh Bank Securities Data Dashboard")
@@ -13,12 +14,14 @@ engine = create_engine(st.secrets["DATABASE_URL"], connect_args={'prepare_thresh
 try:
     dates_df = pd.read_sql('SELECT DISTINCT "Data_Date" FROM daily_securities ORDER BY "Data_Date" DESC', engine)
     available_dates = dates_df["Data_Date"].tolist()
+    min_db_date = pd.to_datetime(dates_df["Data_Date"]).min().date()
+    max_db_date = pd.to_datetime(dates_df["Data_Date"]).max().date()
 except:
     st.warning("No data found in the database yet.")
     st.stop()
 
-# View mode and filters
-view_mode = st.radio("Select View Mode", ["View Specific Date", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
+# Sidebar or Top navigation for filters
+view_mode = st.radio("Select View Mode", ["View Specific Date", "View Date Range", "View Latest Available per Category (Smart Fallback)"], horizontal=True)
 selected_cat = st.multiselect("Filter Category", ["T_Bonds", "T_Bills", "FRTB"], default=["T_Bonds", "T_Bills", "FRTB"])
 
 if selected_cat:
@@ -29,6 +32,18 @@ if selected_cat:
         query = f'SELECT * FROM daily_securities WHERE "Data_Date" = \'{selected_date}\' AND "Category" IN ({cat_str})'
         df = pd.read_sql(query, engine)
         file_suffix = selected_date
+        
+    elif view_mode == "View Date Range":
+        col_d1, col_d2 = st.columns(2)
+        with col_d1:
+            start_d = st.date_input("Start Date", value=max_db_date - timedelta(days=7), min_value=min_db_date, max_value=max_db_date)
+        with col_d2:
+            end_d = st.date_input("End Date", value=max_db_date, min_value=min_db_date, max_value=max_db_date)
+            
+        query = f'SELECT * FROM daily_securities WHERE "Data_Date" >= \'{start_d}\' AND "Data_Date" <= \'{end_d}\' AND "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
+        df = pd.read_sql(query, engine)
+        file_suffix = f"{start_d}_to_{end_d}"
+        
     else:
         query = f"""
             SELECT * FROM daily_securities 
@@ -61,13 +76,11 @@ if selected_cat:
             cat_df = df[df["Category"] == cat]
             count_val = len(cat_df)
             
-            # Outstanding sum in Millions -> Converted to Crore (/ 10)
             outstand_val = 0.0
             if "Outstanding BDT (in Mill)" in cat_df.columns and not cat_df.empty:
                 outstand_mill = pd.to_numeric(cat_df["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
                 outstand_val = outstand_mill / 10.0
             
-            # 30-day maturity sum in Millions -> Converted to Crore (/ 10)
             mat_val = 0.0
             if "Maturity/ Expiry Date" in cat_df.columns and not cat_df["Data_Date"].isna().all() and "Outstanding BDT (in Mill)" in cat_df.columns:
                 base_date = cat_df["Data_Date"].max()
@@ -102,12 +115,11 @@ if selected_cat:
             
         st.dataframe(df, use_container_width=True)
 
-        # --- DOWNLOAD OPTIONS (SINGLE DATE VS FULL HISTORY) ---
+        # --- DOWNLOAD OPTIONS ---
         st.markdown("### 📥 Export Options")
         col_dl1, col_dl2 = st.columns(2)
         
         with col_dl1:
-            # Download current view
             buffer_current = io.BytesIO()
             with pd.ExcelWriter(buffer_current, engine='openpyxl') as writer:
                 df.to_excel(writer, sheet_name="Securities", index=False)
@@ -120,7 +132,6 @@ if selected_cat:
             )
             
         with col_dl2:
-            # Download ALL historical data for selected categories across all dates
             history_query = f'SELECT * FROM daily_securities WHERE "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
             df_history = pd.read_sql(history_query, engine)
             
@@ -129,7 +140,7 @@ if selected_cat:
                 df_history.to_excel(writer, sheet_name="Full_History", index=False)
                 
             st.download_button(
-                label="📥 Download Complete History (All Dates)", 
+                label="📥 Download Complete Database History", 
                 data=buffer_history.getvalue(), 
                 file_name="BB_Securities_Full_History.xlsx", 
                 mime="application/vnd.ms-excel"
