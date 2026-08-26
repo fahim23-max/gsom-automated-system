@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Concurrency reduced to 3 to prevent overwhelming the Bangladesh Bank server
+# Concurrency set to 3 to keep the server stable and prevent timeouts
 CONCURRENCY = 3
 engine = create_engine(
     DATABASE_URL,
@@ -47,7 +47,8 @@ def parse_bb_date(date_str):
 
 def parse_row(cat_name, cols, extracted_date):
     if cat_name == "T-Bill":
-        if len(cols) < 10:
+        # T-Bills omit coupon columns, shifting indices accordingly
+        if len(cols) < 9:
             return None
         sl_no = cols[0].get_text(strip=True)
         isin = cols[1].get_text(strip=True)
@@ -114,7 +115,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
     html_content = None
     for attempt in range(1, retries + 1):
         try:
-            # Timeout increased to 30s to accommodate slower server responses
             await page.goto(url, timeout=30000)
             await page.wait_for_load_state("domcontentloaded")
             html_content = await page.content()
