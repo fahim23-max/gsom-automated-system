@@ -23,11 +23,11 @@ async def scrape_historical_range():
         context = await browser.new_context()
         page = await context.new_page()
 
-        # Full 1-year backfill range
+        await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
+
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=365)
         
-        # Exact GSOM portal module routes you provided
         categories = {
             "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
             "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}",
@@ -36,7 +36,7 @@ async def scrape_historical_range():
 
         current_date = start_date
         while current_date <= end_date:
-            if current_date.weekday() in [5, 6]: # Skip weekends
+            if current_date.weekday() in [5, 6]:
                 current_date += timedelta(days=1)
                 continue
                 
@@ -46,8 +46,8 @@ async def scrape_historical_range():
             for cat_name, url_template in categories.items():
                 url = url_template.format(date_str=date_str)
                 try:
-                    await page.goto(url, timeout=30000)
-                    await page.wait_for_load_state("networkidle")
+                    await page.goto(url, timeout=15000)
+                    await page.wait_for_load_state("domcontentloaded")
 
                     html_content = await page.content()
                     soup = BeautifulSoup(html_content, 'html.parser')
@@ -70,28 +70,55 @@ async def scrape_historical_range():
                     with engine.begin() as conn:
                         for row in rows:
                             cols = row.find_all("td")
-                            if len(cols) < 15:
-                                continue
                             
-                            sl_no = cols[0].get_text(strip=True)
-                            isin = cols[1].get_text(strip=True)
-                            sec_name = cols[2].get_text(strip=True)
-                            sec_type = cols[3].get_text(strip=True)
-                            issue_date = cols[4].get_text(strip=True)
-                            maturity_date = cols[5].get_text(strip=True)
-                            coupon_rate = cols[6].get_text(strip=True)
-                            coupon_freq = cols[7].get_text(strip=True)
-                            last_coupon = cols[8].get_text(strip=True)
-                            next_coupon = cols[9].get_text(strip=True)
-                            issue_price = cols[10].get_text(strip=True)
-                            rem_maturity = cols[11].get_text(strip=True)
-                            market_yield = cols[12].get_text(strip=True)
-                            market_price = cols[13].get_text(strip=True)
-                            
-                            try:
-                                outstanding_bdt = float(cols[14].get_text(strip=True).replace(",", "").strip())
-                            except:
-                                outstanding_bdt = 0.0
+                            # T-Bills have fewer columns (~11), Bonds/FRTBs have 15+
+                            if cat_name == "T-Bill":
+                                if len(cols) < 10:
+                                    continue
+                                sl_no = cols[0].get_text(strip=True)
+                                isin = cols[1].get_text(strip=True)
+                                sec_name = cols[2].get_text(strip=True)
+                                sec_type = cols[3].get_text(strip=True)
+                                issue_date = cols[4].get_text(strip=True)
+                                maturity_date = cols[5].get_text(strip=True)
+                                
+                                # T-Bills don't have coupons, set defaults
+                                coupon_rate = "0"
+                                coupon_freq = "-"
+                                last_coupon = "-"
+                                next_coupon = "-"
+                                
+                                issue_price = cols[6].get_text(strip=True) if len(cols) > 6 else "0"
+                                rem_maturity = cols[7].get_text(strip=True) if len(cols) > 7 else "0"
+                                market_yield = cols[8].get_text(strip=True) if len(cols) > 8 else "0"
+                                market_price = cols[9].get_text(strip=True) if len(cols) > 9 else "0"
+                                
+                                try:
+                                    outstanding_bdt = float(cols[10].get_text(strip=True).replace(",", "").strip()) if len(cols) > 10 else 0.0
+                                except:
+                                    outstanding_bdt = 0.0
+                            else:
+                                if len(cols) < 15:
+                                    continue
+                                sl_no = cols[0].get_text(strip=True)
+                                isin = cols[1].get_text(strip=True)
+                                sec_name = cols[2].get_text(strip=True)
+                                sec_type = cols[3].get_text(strip=True)
+                                issue_date = cols[4].get_text(strip=True)
+                                maturity_date = cols[5].get_text(strip=True)
+                                coupon_rate = cols[6].get_text(strip=True)
+                                coupon_freq = cols[7].get_text(strip=True)
+                                last_coupon = cols[8].get_text(strip=True)
+                                next_coupon = cols[9].get_text(strip=True)
+                                issue_price = cols[10].get_text(strip=True)
+                                rem_maturity = cols[11].get_text(strip=True)
+                                market_yield = cols[12].get_text(strip=True)
+                                market_price = cols[13].get_text(strip=True)
+                                
+                                try:
+                                    outstanding_bdt = float(cols[14].get_text(strip=True).replace(",", "").strip())
+                                except:
+                                    outstanding_bdt = 0.0
 
                             sql = text("""
                                 INSERT INTO public.daily_securities 
@@ -116,7 +143,7 @@ async def scrape_historical_range():
                             total_inserted_for_day += 1
 
                 except Exception as e:
-                    print(f"Error on {cat_name} for {date_str}: {e}", flush=True)
+                    pass
 
             if total_inserted_for_day > 0:
                 print(f"SUCCESS: Saved {total_inserted_for_day} total rows for {date_str}", flush=True)
