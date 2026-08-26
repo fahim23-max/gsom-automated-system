@@ -14,7 +14,6 @@ engine = create_engine(st.secrets["DATABASE_URL"], connect_args={'prepare_thresh
 try:
     dates_df = pd.read_sql('SELECT DISTINCT "Data_Date" FROM daily_securities ORDER BY "Data_Date" DESC', engine)
     available_dates = dates_df["Data_Date"].tolist()
-    # Safely extract min and max bounds for the date picker
     parsed_dates = pd.to_datetime(dates_df["Data_Date"])
     min_db_date = parsed_dates.min().date()
     max_db_date = parsed_dates.max().date()
@@ -36,13 +35,15 @@ if selected_cat:
         file_suffix = selected_date
         
     elif view_mode == "View Date Range":
+        # Safe default start date calculation
+        default_start = max(min_db_date, max_db_date - timedelta(days=7))
+        
         col_d1, col_d2 = st.columns(2)
         with col_d1:
-            start_d = st.date_input("Start Date", value=max_db_date - timedelta(days=7), min_value=min_db_date, max_value=max_db_date)
+            start_d = st.date_input("Start Date", value=default_start, min_value=min_db_date, max_value=max_db_date)
         with col_d2:
             end_d = st.date_input("End Date", value=max_db_date, min_value=min_db_date, max_value=max_db_date)
             
-        # Query all records for these categories, then filter safely in pandas to avoid SQL date casting errors
         query = f'SELECT * FROM daily_securities WHERE "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
         df = pd.read_sql(query, engine)
         
