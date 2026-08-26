@@ -10,9 +10,7 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
 def parse_bb_date(date_str):
-    # Converts '25-AUG-26' or similar formats to standard YYYY-MM-DD
     try:
-        # Clean up brackets if captured
         clean_str = date_str.replace("[", "").replace("]", "").strip()
         dt = datetime.strptime(clean_str, "%d-%b-%y")
         return dt.strftime("%Y-%m-%d")
@@ -25,13 +23,12 @@ async def scrape_historical_range():
         context = await browser.new_context()
         page = await context.new_page()
 
-        # Adjust backfill range (e.g., past 60 days to test cleanly or expand as needed)
         end_date = datetime.now().date()
         start_date = end_date - timedelta(days=60)
         
         current_date = start_date
         while current_date <= end_date:
-            if current_date.weekday() in [5, 6]: # Skip weekends
+            if current_date.weekday() in [5, 6]:
                 current_date += timedelta(days=1)
                 continue
                 
@@ -46,7 +43,6 @@ async def scrape_historical_range():
                 html_content = await page.content()
                 soup = BeautifulSoup(html_content, 'html.parser')
 
-                # Extract exact yield date from page banner if available
                 yield_date_div = soup.find(string=re.compile(r"Yield date:"))
                 extracted_date = date_str
                 if yield_date_div:
@@ -56,7 +52,6 @@ async def scrape_historical_range():
                         if parsed:
                             extracted_date = parsed
 
-                # Find the main data table
                 table = soup.find("table", {"class": "table"})
                 if not table:
                     print(f"No table found for {date_str}", flush=True)
@@ -72,51 +67,45 @@ async def scrape_historical_range():
                         if len(cols) < 15:
                             continue
                         
-                        # Extract and clean values safely
+                        sl_no = cols[0].get_text(strip=True)
                         isin = cols[1].get_text(strip=True)
                         sec_name = cols[2].get_text(strip=True)
                         sec_type = cols[3].get_text(strip=True)
                         issue_date = cols[4].get_text(strip=True)
                         maturity_date = cols[5].get_text(strip=True)
-                        
-                        def safe_float(val):
-                            try:
-                                return float(val.replace(",", "").strip())
-                            except:
-                                return 0.0
-
-                        coupon_rate = safe_float(cols[6].get_text(strip=True))
+                        coupon_rate = cols[6].get_text(strip=True)
                         coupon_freq = cols[7].get_text(strip=True)
                         last_coupon = cols[8].get_text(strip=True)
                         next_coupon = cols[9].get_text(strip=True)
-                        issue_price = safe_float(cols[10].get_text(strip=True))
-                        rem_maturity = safe_float(cols[11].get_text(strip=True))
-                        market_yield = safe_float(cols[12].get_text(strip=True))
-                        market_price = safe_float(cols[13].get_text(strip=True))
-                        outstanding_bdt = safe_float(cols[14].get_text(strip=True))
+                        issue_price = cols[10].get_text(strip=True)
+                        rem_maturity = cols[11].get_text(strip=True)
+                        market_yield = cols[12].get_text(strip=True)
+                        market_price = cols[13].get_text(strip=True)
+                        
+                        try:
+                            outstanding_bdt = float(cols[14].get_text(strip=True).replace(",", "").strip())
+                        except:
+                            outstanding_bdt = 0.0
 
-                        # Insert or upsert into database table
                         sql = text("""
-                            INSERT INTO daily_securities 
-                            (isin, securities_name, securities_type, issue_date, maturity_date, 
-                             coupon_rate, coupon_freq, last_coupon_date, next_coupon_date, 
-                             issue_price, remaining_maturity, market_yield, market_price, 
-                             outstanding_bdt, data_date)
-                            VALUES (:isin, :sec_name, :sec_type, :issue_date, :maturity_date,
-                                    :coupon_rate, :coupon_freq, :last_coupon, :next_coupon,
-                                    :issue_price, :rem_maturity, :market_yield, :market_price,
-                                    :outstanding_bdt, :extracted_date)
-                            ON CONFLICT DO NOTHING;
+                            INSERT INTO public.daily_securities 
+                            ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date", 
+                             "Maturity/ Expiry Date", "Coupon Rate", "Coupon Freqency", "Last Coupon Date", 
+                             "Next Coupon Date", "Issue Price", "Remaining Maturity", "Market Yield", 
+                             "Market Price", "Outstanding BDT (in Mill)", "Category", "Data_Date")
+                            VALUES (:sl_no, :isin, :sec_name, :sec_type, :issue_date, 
+                                    :maturity_date, :coupon_rate, :coupon_freq, :last_coupon, 
+                                    :next_coupon, :issue_price, :rem_maturity, :market_yield, 
+                                    :market_price, :outstanding_bdt, :category, :extracted_date);
                         """)
                         
                         conn.execute(sql, {
-                            "isin": isin, "sec_name": sec_name, "sec_type": sec_type,
-                            "issue_date": issue_date, "maturity_date": maturity_date,
-                            "coupon_rate": coupon_rate, "coupon_freq": coupon_freq,
-                            "last_coupon": last_coupon, "next_coupon": next_coupon,
-                            "issue_price": issue_price, "rem_maturity": rem_maturity,
-                            "market_yield": market_yield, "market_price": market_price,
-                            "outstanding_bdt": outstanding_bdt, "extracted_date": extracted_date
+                            "sl_no": sl_no, "isin": isin, "sec_name": sec_name, "sec_type": sec_type,
+                            "issue_date": issue_date, "maturity_date": maturity_date, "coupon_rate": coupon_rate,
+                            "coupon_freq": coupon_freq, "last_coupon": last_coupon, "next_coupon": next_coupon,
+                            "issue_price": issue_price, "rem_maturity": rem_maturity, "market_yield": market_yield,
+                            "market_price": market_price, "outstanding_bdt": outstanding_bdt, 
+                            "category": "FRTB", "extracted_date": extracted_date
                         })
                         inserted_count += 1
 
