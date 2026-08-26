@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-CONCURRENCY = 3
+CONCURRENCY = 4  # Slightly bumped up for faster processing
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
@@ -16,8 +16,9 @@ engine = create_engine(
     max_overflow=5,
 )
 
-# Focused entirely on T-Bonds to verify and stabilize data collection
+# Combined categories for FRTB and T-Bonds
 CATEGORIES = {
+    "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
     "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}"
 }
 
@@ -84,16 +85,16 @@ def insert_records(records):
 
 async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=3):
     url = url_template.format(date_str=date_str)
-    extracted_date = date_str
+    extracted_date = date_str  # Enforce target search date
 
+    html_content = None
     for attempt in range(1, retries + 1):
         try:
             await page.goto(url, timeout=30000)
             await page.wait_for_load_state("domcontentloaded")
             
-            # Wait for table rows to dynamically render
             try:
-                await page.wait_for_selector("table.table tbody tr", timeout=5000)
+                await page.wait_for_selector("table.table tbody tr", timeout=4000)
             except Exception:
                 pass
 
@@ -107,17 +108,8 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
 
     soup = BeautifulSoup(html_content, 'html.parser')
 
-    yield_date_div = soup.find(string=re.compile(r"Yield date:"))
-    if yield_date_div:
-        match = re.search(r"([0-9]{2}-[A-Z]{3}-[0-9]{2})", yield_date_div)
-        if match:
-            parsed = parse_bb_date(match.group(1))
-            if parsed:
-                extracted_date = parsed
-
     table = soup.find("table", {"class": "table"})
     if not table or not table.find("tbody"):
-        print(f"DEBUG: No table found for {cat_name} on {date_str}", flush=True)
         return
 
     rows = table.find("tbody").find_all("tr")
@@ -129,7 +121,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
             records.append(rec)
 
     if not records:
-        print(f"DEBUG: Table found for {cat_name} on {date_str}, but 0 rows matched column length check. Total rows: {len(rows)}", flush=True)
         return
 
     try:
@@ -164,7 +155,7 @@ async def scrape_historical_range():
         context = await browser.new_context()
 
         end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=365 * 5)  # 5-year test for T-Bonds
+        start_date = end_date - timedelta(days=365 * 5)  # 5 years
 
         queue = asyncio.Queue()
         current_date = start_date
@@ -177,7 +168,7 @@ async def scrape_historical_range():
                     task_count += 1
             current_date += timedelta(days=1)
 
-        print(f"Queued {task_count} T-Bond tasks with {CONCURRENCY} concurrent workers", flush=True)
+        print(f"Queued {task_count} tasks (FRTB + T-Bond) with {CONCURRENCY} concurrent workers", flush=True)
 
         day_counts = {}
         workers = [
@@ -194,7 +185,7 @@ async def scrape_historical_range():
         await browser.close()
 
         total = sum(day_counts.values())
-        print(f"DONE: {total} total T-Bond rows across {len(day_counts)} days with data", flush=True)
+        print(f"DONE: {total} total rows across {len(day_counts)} days with data", flush=True)
 
 
 if __name__ == "__main__":
