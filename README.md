@@ -1,0 +1,1 @@
+# gsom-automated-system
