@@ -161,7 +161,8 @@ async def scrape_historical_range():
         current_date = start_date
         task_count = 0
         while current_date <= end_date:
-            if current_date.weekday() not in (5, 6):
+            # Skip Friday (4) and Saturday (5) for Bangladesh market schedule
+            if current_date.weekday() not in (4, 5):
                 date_str = current_date.strftime("%Y-%m-%d")
                 for cat_name, url_template in CATEGORIES.items():
                     queue.put_nowait((date_str, cat_name, url_template))
