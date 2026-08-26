@@ -14,10 +14,12 @@ engine = create_engine(st.secrets["DATABASE_URL"], connect_args={'prepare_thresh
 try:
     dates_df = pd.read_sql('SELECT DISTINCT "Data_Date" FROM daily_securities ORDER BY "Data_Date" DESC', engine)
     available_dates = dates_df["Data_Date"].tolist()
-    min_db_date = pd.to_datetime(dates_df["Data_Date"]).min().date()
-    max_db_date = pd.to_datetime(dates_df["Data_Date"]).max().date()
-except:
-    st.warning("No data found in the database yet.")
+    # Safely extract min and max bounds for the date picker
+    parsed_dates = pd.to_datetime(dates_df["Data_Date"])
+    min_db_date = parsed_dates.min().date()
+    max_db_date = parsed_dates.max().date()
+except Exception as e:
+    st.warning(f"No data found in the database yet or error reading dates: {e}")
     st.stop()
 
 # View mode and filters
@@ -40,8 +42,14 @@ if selected_cat:
         with col_d2:
             end_d = st.date_input("End Date", value=max_db_date, min_value=min_db_date, max_value=max_db_date)
             
-        query = f'SELECT * FROM daily_securities WHERE "Data_Date" >= \'{start_d}\' AND "Data_Date" <= \'{end_d}\' AND "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
+        # Query all records for these categories, then filter safely in pandas to avoid SQL date casting errors
+        query = f'SELECT * FROM daily_securities WHERE "Category" IN ({cat_str}) ORDER BY "Data_Date" DESC'
         df = pd.read_sql(query, engine)
+        
+        if not df.empty and "Data_Date" in df.columns:
+            df["Data_Date"] = pd.to_datetime(df["Data_Date"]).dt.date
+            df = df[(df["Data_Date"] >= start_d) & (df["Data_Date"] <= end_d)]
+            
         file_suffix = f"{start_d}_to_{end_d}"
         
     else:
@@ -59,7 +67,7 @@ if selected_cat:
         file_suffix = "Latest"
     
     if df.empty:
-        st.info(f"ℹ️ No data available for the selected options.")
+        st.info(f"ℹ️ No data available for the selected options or date range.")
     else:
         # --- PREPARE DATES FOR MATRIX CALCULATIONS ---
         if "Maturity/ Expiry Date" in df.columns:
@@ -100,7 +108,7 @@ if selected_cat:
             
         matrix_df = pd.DataFrame(matrix_data).set_index("Metric")
         
-        # Apply professional styling (colored headers, dark text, subtle borders)
+        # Apply professional styling
         styled_matrix = matrix_df.style.set_table_styles([
             {"selector": "th", "props": [("background-color", "#0e1117"), ("color", "white"), ("font-family", "sans-serif"), ("font-size", "15px"), ("text-align", "center"), ("padding", "10px")]},
             {"selector": "td", "props": [("font-family", "sans-serif"), ("font-size", "14px"), ("text-align", "center"), ("padding", "8px"), ("border", "1px solid #e0e0e0")]},
