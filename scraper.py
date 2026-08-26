@@ -23,19 +23,20 @@ async def scrape_historical_range():
         context = await browser.new_context()
         page = await context.new_page()
 
+        # Full 1-year backfill range
         end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=30)  # Adjust window as needed
+        start_date = end_date - timedelta(days=365)
         
-        # Corrected category route mappings for Bangladesh Bank GSOM portal
+        # Exact GSOM portal module routes you provided
         categories = {
             "FRTB": "https://gsom.bb.org.bd/index.php/frtb?date={date_str}",
-            "T-Bond": "https://gsom.bb.org.bd/index.php/t_bond?date={date_str}",
+            "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}",
             "T-Bill": "https://gsom.bb.org.bd/index.php/tbill?date={date_str}"
         }
 
         current_date = start_date
         while current_date <= end_date:
-            if current_date.weekday() in [5, 6]:
+            if current_date.weekday() in [5, 6]: # Skip weekends
                 current_date += timedelta(days=1)
                 continue
                 
