@@ -52,8 +52,8 @@ if selected_cat:
         if "Data_Date" in df.columns:
             df["Data_Date"] = pd.to_datetime(df["Data_Date"], errors='coerce')
 
-        # --- BUILD SUMMARY MATRIX ---
-        st.markdown("### 📊 Portfolio Summary Matrix")
+        # --- BUILD SUMMARY MATRIX (IN CRORE) ---
+        st.markdown("### 📊 Portfolio Summary Matrix (Amounts in BDT Crore)")
         
         matrix_data = {"Metric": ["Count", "Outstanding", "Maturity in next 30 days"]}
         
@@ -61,12 +61,13 @@ if selected_cat:
             cat_df = df[df["Category"] == cat]
             count_val = len(cat_df)
             
-            # Outstanding sum using exact column name
+            # Outstanding sum in Millions -> Converted to Crore (/ 10)
             outstand_val = 0.0
             if "Outstanding BDT (in Mill)" in cat_df.columns and not cat_df.empty:
-                outstand_val = pd.to_numeric(cat_df["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
+                outstand_mill = pd.to_numeric(cat_df["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
+                outstand_val = outstand_mill / 10.0
             
-            # 30-day maturity sum
+            # 30-day maturity sum in Millions -> Converted to Crore (/ 10)
             mat_val = 0.0
             if "Maturity/ Expiry Date" in cat_df.columns and not cat_df["Data_Date"].isna().all() and "Outstanding BDT (in Mill)" in cat_df.columns:
                 base_date = cat_df["Data_Date"].max()
@@ -75,13 +76,14 @@ if selected_cat:
                     (cat_df["Maturity/ Expiry Date"] >= base_date) & 
                     (cat_df["Maturity/ Expiry Date"] <= next_month_end)
                 ]
-                mat_val = pd.to_numeric(maturing_soon["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
+                mat_mill = pd.to_numeric(maturing_soon["Outstanding BDT (in Mill)"].astype(str).str.replace(',', ''), errors='coerce').sum()
+                mat_val = mat_mill / 10.0
             
-            # Format values cleanly
+            # Format values cleanly in Crore
             matrix_data[cat] = [
                 f"{count_val:,}",
-                f"{outstand_val:,.2f} Mill",
-                f"{mat_val:,.2f} Mill"
+                f"BDT {outstand_val:,.2f} Cr",
+                f"BDT {mat_val:,.2f} Cr"
             ]
             
         matrix_df = pd.DataFrame(matrix_data)
