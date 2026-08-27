@@ -404,10 +404,7 @@ try:
         """, unsafe_allow_html=True)
         
         if not bills_maturing.empty:
-            st.dataframe(
-                bills_maturing,
-                hide_index=True, height=180,
-            )
+            st.dataframe(bills_maturing, hide_index=True, height=180)
         else:
             st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -421,10 +418,7 @@ try:
         """, unsafe_allow_html=True)
 
         if not bonds_maturing.empty:
-            st.dataframe(
-                bonds_maturing,
-                hide_index=True, height=180,
-            )
+            st.dataframe(bonds_maturing, hide_index=True, height=180)
         else:
             st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
@@ -464,5 +458,5 @@ try:
             st.info("No Bond or FRTB records available for this range.")
 
 except Exception as e:
-    st.error("An error occurred while running the app:")
+    st.error("🚨 An unhandled exception occurred in the app:")
     st.code(traceback.format_exc())
