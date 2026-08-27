@@ -230,7 +230,7 @@ try:
     bill_start, bill_end = unpack_range(bill_range)
     bond_start, bond_end = unpack_range(bond_range)
 
-    # --- LOAD RANGE-FILTERED DATA ---
+    # --- LOAD RANGE-FILTERED DATA WITH SQL SPLITTING ---
     @st.cache_data(ttl=30)
     def load_bills_range(start_d, end_d):
         if not start_d or not end_d:
@@ -239,22 +239,21 @@ try:
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
     @st.cache_data(ttl=30)
-    def load_securities_range(start_d, end_d):
+    def load_securities_range(start_d, end_d, is_frtb=None):
         if not start_d or not end_d:
             return pd.DataFrame()
-        q = text('SELECT * FROM public.daily_securities WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        if is_frtb is None:
+            q = text('SELECT * FROM public.daily_securities WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        elif is_frtb:
+            q = text('SELECT * FROM public.daily_securities WHERE "Data_Date"::DATE BETWEEN :s AND :e AND (CAST(public.daily_securities AS TEXT) ILIKE "%FRTB%") ORDER BY "Data_Date" DESC')
+        else:
+            q = text('SELECT * FROM public.daily_securities WHERE "Data_Date"::DATE BETWEEN :s AND :e AND (CAST(public.daily_securities AS TEXT) NOT ILIKE "%FRTB%") ORDER BY "Data_Date" DESC')
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
     df_bills = load_bills_range(bill_start, bill_end)
-    df_securities = load_securities_range(bond_start, bond_end)
-
-    if not df_securities.empty:
-        frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
-        df_frtbs = df_securities[frtb_mask]
-        df_bonds = df_securities[~frtb_mask]
-    else:
-        df_frtbs = pd.DataFrame()
-        df_bonds = pd.DataFrame()
+    df_securities = load_securities_range(bond_start, bond_end, is_frtb=None)
+    df_frtbs = load_securities_range(bond_start, bond_end, is_frtb=True)
+    df_bonds = load_securities_range(bond_start, bond_end, is_frtb=False)
 
     # --- EXCEL EXPORT HELPER ---
     def to_excel_bytes(df, sheet_name):
@@ -292,17 +291,16 @@ try:
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
         
         if table_name == "daily_securities" and is_frtb is not None:
-            q = text('SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities')
+            if is_frtb:
+                q = text('SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities WHERE CAST(public.daily_securities AS TEXT) ILIKE "%FRTB%"')
+            else:
+                q = text('SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities WHERE CAST(public.daily_securities AS TEXT) NOT ILIKE "%FRTB%"')
         else:
             q = text(f'SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.{table_name}')
             
         temp_df = pd.read_sql(q, engine)
         if temp_df.empty:
             return pd.DataFrame(columns=cols)
-
-        if table_name == "daily_securities" and is_frtb is not None:
-            frtb_check = temp_df.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
-            temp_df = temp_df[frtb_check] if is_frtb else temp_df[~frtb_check]
 
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
