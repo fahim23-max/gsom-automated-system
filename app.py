@@ -3,6 +3,7 @@ import io
 from datetime import timedelta
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from sqlalchemy import create_engine, text
 
@@ -140,7 +141,7 @@ df_bills = load_bills_range(bill_start, bill_end)
 df_securities = load_securities_range(bond_start, bond_end)
 
 
-# --- EXCEL EXPORT HELPER ---
+# --- EXCEL EXPORT HELPER (Fixed for Timezone stripping) ---
 def to_excel_bytes(df, sheet_name):
     buffer = io.BytesIO()
     export_df = df.copy()
@@ -187,12 +188,13 @@ bonds_anchor = df_securities["Data_Date"].max() if not df_securities.empty else 
 
 
 def render_maturity_card(title, anchor_label, crore, count, color_start, color_end):
-    card_code = f"""
+    card_html = f"""
     <div style="
         background: linear-gradient(135deg, {color_start} 0%, {color_end} 100%);
         border-radius: 10px;
         padding: 14px 18px;
         color: white;
+        font-family: sans-serif;
         box-shadow: 0 3px 10px rgba(0,0,0,0.12);
     ">
         <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
@@ -204,7 +206,7 @@ def render_maturity_card(title, anchor_label, crore, count, color_start, color_e
         </div>
     </div>
     """
-    st.markdown(card_code, unsafe_allow_html=True)
+    components.html(card_html, height=95, scrolling=False)
 
 
 # --- MARKET SUMMARY (shown first) ---
@@ -243,7 +245,7 @@ def render_summary_cards(summary_df, empty_message, latest_label, shades):
         return
     st.caption(f"As of {latest_label}")
 
-    cards_html = "<div style='display:flex; flex-wrap:wrap; gap:14px;'>"
+    cards_html = "<div style='display:flex; flex-wrap:wrap; gap:14px; font-family:sans-serif;'>"
     for i, (_, row) in enumerate(summary_df.iterrows()):
         color = shades[i % len(shades)]
         cards_html += f"""
@@ -268,8 +270,7 @@ def render_summary_cards(summary_df, empty_message, latest_label, shades):
         """
     cards_html += "</div>"
     
-    # Using st.html if available or st.markdown with a string variable assignment that bypasses code block triggers
-    st.markdown(cards_html, unsafe_allow_html=True)
+    components.html(cards_html, height=130, scrolling=False)
 
 
 st.markdown("#### 📊 Market Summary")
