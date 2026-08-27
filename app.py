@@ -265,7 +265,7 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- MONTHLY METRICS CALCULATION (NEW & REISSUED LOGIC) ---
+    # --- MONTHLY METRICS CALCULATION (NEW, REISSUED & ALREADY SETTLED) ---
     def calculate_monthly_metrics(df):
         cols = ["Newly Issued", "Reissued", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
@@ -287,23 +287,26 @@ try:
         # Sort chronologically to track outstanding amount changes per ISIN
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
         
-        # 1. Newly Issued: Attributed to the formal Issue Date using the first observed amount
+        # 1. Newly Issued: Base amount observed assigned to formal Issue Date
         first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first")
         newly_issued = first_records.dropna(subset=["Issue_Dt"]).groupby(
             first_records["Issue_Dt"].dt.to_period("M")
         )["Amt_Cr"].sum().rename("Newly Issued")
         
-        # 2. Reissued: Track daily increases in Outstanding Amount per ISIN
+        # 2. Reissued: Track day-over-day positive increases in Outstanding Amount per ISIN
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
         reissues = temp_df[temp_df["Amt_Diff"] > 0]
         reissued = reissues.dropna(subset=["Data_Dt"]).groupby(
             reissues["Data_Dt"].dt.to_period("M")
         )["Amt_Diff"].sum().rename("Reissued")
         
-        # 3. Settled: The final observed outstanding amount clears out on the Maturity Date
+        # 3. Settled: Only include maturities that have ALREADY passed (<= max loaded Data Date)
+        max_date = temp_df["Data_Dt"].max()
         last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last")
-        settled = last_records.dropna(subset=["Mat_Dt"]).groupby(
-            last_records["Mat_Dt"].dt.to_period("M")
+        past_maturities = last_records[last_records["Mat_Dt"] <= max_date]
+        
+        settled = past_maturities.dropna(subset=["Mat_Dt"]).groupby(
+            past_maturities["Mat_Dt"].dt.to_period("M")
         )["Amt_Cr"].sum().rename("Settled")
         
         monthly = pd.concat([newly_issued, reissued, settled], axis=1).fillna(0)
@@ -368,6 +371,7 @@ try:
                 temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
             ).fillna(0)
 
+            # Strict Weighted Average Calculation (Ignores missing/zero yields)
             valid_yields = temp_df[temp_df["Yield_Val"] > 0]
             if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
                 weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
@@ -472,7 +476,7 @@ try:
     with sum_col2:
         render_bonds_summary_table(df_securities, bond_end)
 
-    # --- 2. MONTHLY METRICS LEDGER (ISSUANCE & SETTLEMENT) ---
+    # --- 2. MONTHLY METRICS LEDGER (NEWLY ISSUED, REISSUED, SETTLED) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
     st.markdown("#### 📅 Monthly Issuance & Settlement Ledger (BDT Cr)")
     
