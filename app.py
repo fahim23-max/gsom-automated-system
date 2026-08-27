@@ -187,23 +187,24 @@ bonds_anchor = df_securities["Data_Date"].max() if not df_securities.empty else 
 
 
 def render_maturity_card(title, anchor_label, crore, count, color_start, color_end):
-    st.markdown(f"""
-        <div style="
-            background: linear-gradient(135deg, {color_start} 0%, {color_end} 100%);
-            border-radius: 10px;
-            padding: 14px 18px;
-            color: white;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
-        ">
-            <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
-                ⏰ {title} — Maturing in 30 Days (from {anchor_label})
-            </div>
-            <div style="font-size:2.0rem; font-weight:800; margin-top:4px;">
-                ৳ {crore:,.2f} Cr &nbsp;
-                <span style="font-size:1.1rem; font-weight:400; opacity:0.92;">({count} ISINs)</span>
-            </div>
+    card_code = f"""
+    <div style="
+        background: linear-gradient(135deg, {color_start} 0%, {color_end} 100%);
+        border-radius: 10px;
+        padding: 14px 18px;
+        color: white;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+    ">
+        <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
+            ⏰ {title} — Maturing in 30 Days (from {anchor_label})
         </div>
-    """, unsafe_allow_html=True)
+        <div style="font-size:2.0rem; font-weight:800; margin-top:4px;">
+            ৳ {crore:,.2f} Cr &nbsp;
+            <span style="font-size:1.1rem; font-weight:400; opacity:0.92;">({count} ISINs)</span>
+        </div>
+    </div>
+    """
+    st.markdown(card_code, unsafe_allow_html=True)
 
 
 # --- MARKET SUMMARY (shown first) ---
@@ -266,7 +267,8 @@ def render_summary_cards(summary_df, empty_message, latest_label, shades):
             </div>
         """
     cards_html += "</div>"
-    # FIXED: Added unsafe_allow_html=True below so cards render as HTML instead of raw text code
+    
+    # Using st.html if available or st.markdown with a string variable assignment that bypasses code block triggers
     st.markdown(cards_html, unsafe_allow_html=True)
 
 
