@@ -1,4 +1,5 @@
 import os
+import io
 import streamlit as st
 import pandas as pd
 from datetime import timedelta
@@ -81,9 +82,8 @@ with tab_bonds:
                     bonds_df["Maturity Date Parsed"] = pd.to_datetime(bonds_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
                     bonds_df["Data_Date_Parsed"] = pd.to_datetime(bonds_df["Data_Date"])
 
-                    # Baseline for summary metrics: Use the latest date in the fetched dataset (prevents multi-day accumulation)
                     baseline_date = bonds_df["Data_Date_Parsed"].max()
-                    summary_source_df = bonds_df[bonds_df["Data_Date_Parsed"] == baseline_date]
+                    summary_source_df = bonds_df[bonds_df["Data_Date_Parsed"] == baseline_date].drop_duplicates(subset=["ISIN"])
 
                     st.markdown(f"### 📈 Summary by Instrument Type (Snapshot as of {baseline_date.strftime('%Y-%m-%d')})")
                     summary_df = summary_source_df.groupby("Securities Type").agg(
@@ -97,7 +97,6 @@ with tab_bonds:
                     summary_df.columns = ["Securities Type", "Total Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
                     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
-                    # Maturities in Next 30 Days (Anchored to Highest Date in View)
                     thirty_days_later = baseline_date + timedelta(days=30)
                     maturing_bonds = summary_source_df[
                         (summary_source_df["Maturity Date Parsed"] >= baseline_date) & 
@@ -118,8 +117,19 @@ with tab_bonds:
                     display_bonds = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bonds, use_container_width=True)
 
-                    csv_data = display_bonds.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download Bond Data (CSV)", data=csv_data, file_name="bonds_valuation_report.csv", mime="text/csv", key="dl_bonds")
+                    # Excel Export
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        display_bonds.to_excel(writer, index=False, sheet_name='Bonds_Valuation')
+                    excel_data_bonds = output.getvalue()
+
+                    st.download_button(
+                        label="📥 Download Bond Data (Excel)",
+                        data=excel_data_bonds,
+                        file_name="bonds_valuation_report.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_bonds_excel"
+                    )
                 else:
                     st.warning("No records found for the selected range.")
             else:
@@ -181,9 +191,8 @@ with tab_bills:
                     bills_df["Maturity Date Parsed"] = pd.to_datetime(bills_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
                     bills_df["Data_Date_Parsed"] = pd.to_datetime(bills_df["Data_Date"])
 
-                    # Baseline for summary metrics: Use the latest date in the fetched dataset
                     baseline_bill_date = bills_df["Data_Date_Parsed"].max()
-                    summary_bill_source = bills_df[bills_df["Data_Date_Parsed"] == baseline_bill_date]
+                    summary_bill_source = bills_df[bills_df["Data_Date_Parsed"] == baseline_bill_date].drop_duplicates(subset=["ISIN"])
 
                     st.markdown(f"### 📈 Summary by Tenor Type (Snapshot as of {baseline_bill_date.strftime('%Y-%m-%d')})")
                     bill_summary = summary_bill_source.groupby("Securities Type").agg(
@@ -197,7 +206,6 @@ with tab_bills:
                     bill_summary.columns = ["Securities Type", "Total Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
                     st.dataframe(bill_summary, use_container_width=True, hide_index=True)
 
-                    # Maturities in Next 30 Days (Anchored to Highest Date in View)
                     thirty_days_later_bills = baseline_bill_date + timedelta(days=30)
                     maturing_bills = summary_bill_source[
                         (summary_bill_source["Maturity Date Parsed"] >= baseline_bill_date) & 
@@ -218,8 +226,19 @@ with tab_bills:
                     display_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bills, use_container_width=True)
 
-                    csv_bills = display_bills.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Download T-Bill Data (CSV)", data=csv_bills, file_name="tbills_valuation_report.csv", mime="text/csv", key="dl_bills")
+                    # Excel Export
+                    output_bills = io.BytesIO()
+                    with pd.ExcelWriter(output_bills, engine='openpyxl') as writer:
+                        display_bills.to_excel(writer, index=False, sheet_name='TBills_Valuation')
+                    excel_data_bills = output_bills.getvalue()
+
+                    st.download_button(
+                        label="📥 Download T-Bill Data (Excel)",
+                        data=excel_data_bills,
+                        file_name="tbills_valuation_report.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_bills_excel"
+                    )
                 else:
                     st.info("No T-Bill records found for the selected range.")
             else:
