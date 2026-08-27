@@ -2,7 +2,7 @@ name: Scrape GSOM Data
 
 on:
   schedule:
-    - cron: '30 14 * * *' # Runs daily
+    - cron: '15 4 * * *' # Runs daily at 10:15 AM BST (04:15 UTC)
   workflow_dispatch:
 
 jobs:
