@@ -267,18 +267,7 @@ try:
     df_bills = load_bills_range(bill_start, bill_end)
     df_securities = load_securities_range(bond_start, bond_end)
 
-    # --- LOAD FULL UNFILTERED DATA FOR THE LEDGER (CACHED) ---
-    @st.cache_data(ttl=300)
-    def load_full_ledger_data():
-        q_bills = text('SELECT * FROM public.daily_bills')
-        q_secs = text('SELECT * FROM public.daily_securities')
-        df_b = pd.read_sql(q_bills, engine)
-        df_s = pd.read_sql(q_secs, engine)
-        return df_b, df_s
-
-    df_bills_full, df_securities_full = load_full_ledger_data()
-
-    # Split securities into FRTBs and Standard Bonds globally
+    # Split df_securities into FRTBs and Standard Bonds globally
     if not df_securities.empty:
         frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
         df_frtbs = df_securities[frtb_mask]
@@ -286,14 +275,6 @@ try:
     else:
         df_frtbs = pd.DataFrame()
         df_bonds = pd.DataFrame()
-
-    if not df_securities_full.empty:
-        frtb_mask_full = df_securities_full.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
-        df_frtbs_full = df_securities_full[frtb_mask_full]
-        df_bonds_full = df_securities_full[~frtb_mask_full]
-    else:
-        df_frtbs_full = pd.DataFrame()
-        df_bonds_full = pd.DataFrame()
 
     # --- EXCEL EXPORT HELPER ---
     def to_excel_bytes(df, sheet_name):
@@ -325,16 +306,26 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- OPTIMIZED CACHED MONTHLY METRICS CALCULATION ---
+    # --- FAST SQL-CACHED MONTHLY METRICS CALCULATION ---
     @st.cache_data(ttl=300)
-    def calculate_monthly_metrics(df_serialized_json):
-        # Accepts serialized dataframe to allow Streamlit hash-caching
-        df = pd.read_json(df_serialized_json) if isinstance(df_serialized_json, str) else df_serialized_json
+    def calculate_monthly_metrics(table_name, is_frtb=None):
+        if table_name == "daily_securities" and is_frtb is not None:
+            if is_frtb:
+                q = text('SELECT * FROM public.daily_securities WHERE EXISTS (SELECT 1 FROM json_each_text(to_json(daily_securities)) WHERE value ILIKE "%FRTB%")')
+            else:
+                q = text('SELECT * FROM public.daily_securities WHERE NOT EXISTS (SELECT 1 FROM json_each_text(to_json(daily_securities)) WHERE value ILIKE "%FRTB%")')
+            sub_df = pd.read_sql(q, engine)
+        else:
+            q = text(f'SELECT * FROM public.{table_name}')
+            sub_df = pd.read_sql(q, engine)
+            
+        return compute_metrics_from_df(sub_df)
+
+    def compute_metrics_from_df(temp_df):
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
-        if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
+        if temp_df.empty or "ISIN" not in temp_df.columns or "Data_Date" not in temp_df.columns:
             return pd.DataFrame(columns=cols)
             
-        temp_df = df.copy()
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
@@ -580,13 +571,13 @@ try:
         render_summary_block(df_bonds, bond_end, "Treasury Bonds", "bond-header", include_coupon=True)
 
 
-    # --- 2. MONTHLY METRICS LEDGER (CACHED & LIGHTNING FAST) ---
+    # --- 2. MONTHLY METRICS LEDGER (3-PART SPLIT: BILLS, FRTBS, BONDS) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
     st.markdown("#### 📅 Monthly Issuance & Settlement Ledger (BDT Cr)")
     
-    bills_monthly = calculate_monthly_metrics(df_bills_full.to_json())
-    frtbs_monthly = calculate_monthly_metrics(df_frtbs_full.to_json())
-    bonds_monthly = calculate_monthly_metrics(df_bonds_full.to_json())
+    bills_monthly = calculate_monthly_metrics("daily_bills")
+    frtbs_monthly = calculate_monthly_metrics("daily_securities", is_frtb=True)
+    bonds_monthly = calculate_monthly_metrics("daily_securities", is_frtb=False)
 
     dfs_to_join = []
     if not bills_monthly.empty:
