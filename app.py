@@ -115,7 +115,7 @@ try:
     # Database Connection
     DATABASE_URL = os.environ.get("DATABASE_URL")
     if not DATABASE_URL:
-        st.error("DATABASE_URL secret is missing from Streamlit Secrets!")
+        st.error("DATABASE_URL secret is missing from Streamlit Secrets/Environment!")
         st.stop()
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
