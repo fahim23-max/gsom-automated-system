@@ -6,1465 +6,460 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 
-
-# ============================================================
-# PAGE CONFIGURATION
-# ============================================================
-
+# Page Configuration
 st.set_page_config(
     page_title="GSOM Treasury Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
-
-# ============================================================
-# CUSTOM CSS
-# ============================================================
-
-st.markdown(
-    """
+# Custom CSS for Background Color, Centered Tables, and Upgraded Financial Metric Cards
+st.markdown("""
     <style>
-
-    /* ========================================================
-       PAGE
-       ======================================================== */
-
+    /* Full Page Background */
     .stApp {
-        background-color: #f8fafc;
+        background-color: #f8fafc !important;
     }
-
+    
+    /* Global App Container */
     .main .block-container {
         padding-top: 1.5rem;
         padding-bottom: 2.5rem;
     }
 
-
-    /* ========================================================
-       HEADINGS
-       ======================================================== */
-
-    h1 {
-        color: #0f172a;
-    }
-
-    h2, h3, h4 {
-        color: #0f172a;
-    }
-
-
-    /* ========================================================
-       NATIVE STREAMLIT METRIC CARDS
-       ======================================================== */
-
-    [data-testid="stMetric"] {
+    /* Summary Table Styling */
+    .summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+        margin-bottom: 12px;
+        font-family: sans-serif;
         background-color: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-radius: 10px;
-        padding: 16px 18px;
-        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
-    }
-
-    [data-testid="stMetricLabel"] {
-        color: #64748b !important;
-        font-weight: 600;
-    }
-
-    [data-testid="stMetricValue"] {
-        color: #0f172a !important;
-        font-weight: 700;
-    }
-
-    [data-testid="stMetricDelta"] {
-        font-size: 0.85rem;
-    }
-
-
-    /* ========================================================
-       DATAFRAME
-       ======================================================== */
-
-    [data-testid="stDataFrame"] {
-        border: 1px solid #e2e8f0;
         border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    }
+    .summary-table th {
+        background-color: #f1f5f9;
+        color: #334155;
+        font-weight: 700;
+        text-align: center;
+        padding: 10px;
+        border: 1px solid #e2e8f0;
+        font-size: 0.95rem;
+    }
+    .summary-table td {
+        text-align: center;
+        padding: 12px;
+        border: 1px solid #e2e8f0;
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: #0f172a;
+    }
+    
+    /* Centered Table Headers */
+    .bill-header, .bond-header { 
+        color: #dc2626; 
+        font-weight: bold; 
+        font-size: 1.15rem; 
+        margin-bottom: 4px; 
+        text-align: center; 
     }
 
-
-    /* ========================================================
-       DIVIDER
-       ======================================================== */
-
-    hr {
-        border: 0;
-        border-top: 1px solid #e2e8f0;
-        margin: 20px 0;
+    /* Upgraded Professional Financial Metric Cards */
+    .custom-metric-card {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-top: 4px solid #3b82f6 !important;
+        border-radius: 10px !important;
+        padding: 20px !important;
+        text-align: center !important;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
+        margin-bottom: 15px !important;
     }
-
-
-    /* ========================================================
-       SECTION CAPTION
-       ======================================================== */
-
-    .section-caption {
-        color: #64748b;
-        font-size: 0.85rem;
-        margin-top: -8px;
-        margin-bottom: 10px;
+    .custom-metric-card.bill-card {
+        border-top-color: #dc2626 !important;
     }
-
+    .custom-metric-card.bond-card {
+        border-top-color: #2563eb !important;
+    }
+    .custom-metric-label {
+        font-size: 0.9rem !important;
+        color: #64748b !important;
+        font-weight: 600 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-bottom: 8px !important;
+    }
+    .custom-metric-value {
+        font-size: 1.8rem !important;
+        color: #0f172a !important;
+        font-weight: 800 !important;
+        margin-bottom: 8px !important;
+    }
+    .custom-metric-delta {
+        font-size: 0.85rem !important;
+        color: #1e293b !important;
+        background-color: #f1f5f9 !important;
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 20px;
+        font-weight: 600;
+        border: 1px solid #e2e8f0;
+    }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
-
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
+# Database Connection
 DATABASE_URL = os.environ.get("DATABASE_URL")
+engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-if not DATABASE_URL:
-    st.error("DATABASE_URL environment variable is not configured.")
-    st.stop()
-
-try:
-    engine = create_engine(
-        DATABASE_URL,
-        connect_args={"prepare_threshold": None}
-    )
-except Exception as e:
-    st.error(f"Unable to connect to the database: {e}")
-    st.stop()
-
-
-# ============================================================
-# TITLE
-# ============================================================
-
-st.markdown(
-    """
-    <div style="text-align:center; margin-bottom:1rem;">
-        <h1 style="margin-bottom:0;">
-            🏛️ GSOM Treasury &amp; Securities Dashboard
-        </h1>
-        <p style="
-            color:#64748b;
-            font-size:1.05rem;
-            margin-top:0.25rem;
-        ">
+# --- TITLE ---
+st.markdown("""
+    <div style="text-align:center; margin-bottom: 1rem;">
+        <h1 style="margin-bottom: 0;">🏛️ GSOM Treasury &amp; Securities Dashboard</h1>
+        <p style="color:#64748b; font-size:1.05rem; margin-top:0.25rem;">
             Live data for Government Bonds, FRTBs, and T-Bills
         </p>
     </div>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
 
-
-# ============================================================
-# HELPER FUNCTIONS
-# ============================================================
-
-def to_date(value):
-    """Convert a database date value to Python date."""
-    if value is None:
-        return None
-
-    try:
-        return pd.to_datetime(value).date()
-    except Exception:
-        return None
-
-
-def default_range(min_value, max_value, lookback_days=30):
-    """Return a sensible default date range."""
-    mn = to_date(min_value)
-    mx = to_date(max_value)
-
-    if mn is None or mx is None:
-        return None, None
-
-    start = max(
-        mn,
-        mx - timedelta(days=lookback_days)
-    )
-
-    return start, mx
-
-
-def unpack_range(value):
-    """
-    st.date_input returns a tuple when both dates have been selected.
-    """
-    if isinstance(value, tuple) and len(value) == 2:
-        return value[0], value[1]
-
-    return None, None
-
-
-def clean_number(series):
-    """
-    Convert strings such as:
-        12,345.67
-        9.25%
-        BDT 12,345
-    into numeric values.
-    """
-    return pd.to_numeric(
-        series.astype(str)
-        .str.replace(",", "", regex=False)
-        .str.replace("%", "", regex=False)
-        .str.replace("BDT", "", regex=False)
-        .str.strip(),
-        errors="coerce"
-    ).fillna(0)
-
-
-def get_latest_snapshot(df):
-    """
-    Return the latest available date snapshot with duplicate ISINs removed.
-    """
-    if df.empty or "Data_Date" not in df.columns:
-        return pd.DataFrame()
-
-    latest_date = df["Data_Date"].max()
-
-    snapshot = df[
-        df["Data_Date"] == latest_date
-    ].copy()
-
-    if "ISIN" in snapshot.columns:
-        snapshot = snapshot.drop_duplicates(
-            subset="ISIN"
-        )
-
-    return snapshot
-
-
-def remove_id_columns(df):
-    """Remove database ID columns from display/export."""
-    if df.empty:
-        return df.copy()
-
-    columns_to_remove = [
-        c for c in ["id", "ID", "Id"]
-        if c in df.columns
-    ]
-
-    return df.drop(
-        columns=columns_to_remove,
-        errors="ignore"
-    )
-
-
-# ============================================================
-# DATABASE DATE BOUNDS
-# ============================================================
-
+# --- AVAILABLE DATE BOUNDS ---
 @st.cache_data(ttl=30)
 def get_bill_date_bounds():
     try:
-        query = """
-            SELECT
-                MIN("Data_Date")::TEXT,
-                MAX("Data_Date")::TEXT
-            FROM public.daily_bills
-        """
-
-        df = pd.read_sql(
-            query,
-            engine
-        )
-
+        df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_bills', engine)
         return df.iloc[0, 0], df.iloc[0, 1]
-
     except Exception as e:
-        st.error(
-            f"Error fetching T-Bill date range: {e}"
-        )
+        st.error(f"Error fetching T-Bill date range: {e}")
         return None, None
-
 
 @st.cache_data(ttl=30)
 def get_security_date_bounds():
     try:
-        query = """
-            SELECT
-                MIN("Data_Date")::TEXT,
-                MAX("Data_Date")::TEXT
-            FROM public.daily_securities
-        """
-
-        df = pd.read_sql(
-            query,
-            engine
-        )
-
+        df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_securities', engine)
         return df.iloc[0, 0], df.iloc[0, 1]
-
     except Exception as e:
-        st.error(
-            f"Error fetching Bond/FRTB date range: {e}"
-        )
+        st.error(f"Error fetching Bond/FRTB date range: {e}")
         return None, None
-
 
 bill_min, bill_max = get_bill_date_bounds()
 sec_min, sec_max = get_security_date_bounds()
 
-
 if not bill_min and not sec_min:
-    st.warning(
-        "No data found in the database. "
-        "Please check your tables or run the scrapers."
-    )
+    st.warning("No data found in the database. Please check your tables or run scrapers.")
     st.stop()
 
 
-# ============================================================
-# DATE RANGE SELECTORS
-# ============================================================
+def to_date(s):
+    return pd.to_datetime(s).date() if s else None
 
-st.markdown("### 🔎 Select Date Range")
 
+def default_range(min_s, max_s, lookback_days=30):
+    mn, mx = to_date(min_s), to_date(max_s)
+    if mn is None or mx is None:
+        return None, None
+    start = max(mn, mx - timedelta(days=lookback_days))
+    return start, mx
+
+
+# --- DATE RANGE PICKERS ---
+st.markdown("#### 🔎 Select Date Range")
 range_col1, range_col2 = st.columns(2)
 
-
 with range_col1:
-
     if bill_min:
-
-        bill_default_start, bill_default_end = default_range(
-            bill_min,
-            bill_max
-        )
-
+        b_start_default, b_end_default = default_range(bill_min, bill_max)
         bill_range = st.date_input(
             "📅 T-Bill Date Range",
-            value=(
-                bill_default_start,
-                bill_default_end
-            ),
+            value=(b_start_default, b_end_default),
             min_value=to_date(bill_min),
             max_value=to_date(bill_max),
-            key="bill_date_range"
         )
-
     else:
-
         bill_range = None
-
-        st.info(
-            "No T-Bill dates available."
-        )
-
+        st.info("No T-Bill dates available.")
 
 with range_col2:
-
     if sec_min:
-
-        bond_default_start, bond_default_end = default_range(
-            sec_min,
-            sec_max
-        )
-
+        s_start_default, s_end_default = default_range(sec_min, sec_max)
         bond_range = st.date_input(
             "📅 Bond / FRTB Date Range",
-            value=(
-                bond_default_start,
-                bond_default_end
-            ),
+            value=(s_start_default, s_end_default),
             min_value=to_date(sec_min),
             max_value=to_date(sec_max),
-            key="bond_date_range"
         )
-
     else:
-
         bond_range = None
-
-        st.info(
-            "No Bond/FRTB dates available."
-        )
+        st.info("No Bond/FRTB dates available.")
 
 
-bill_start, bill_end = unpack_range(
-    bill_range
-)
-
-bond_start, bond_end = unpack_range(
-    bond_range
-)
+def unpack_range(rng):
+    if isinstance(rng, tuple) and len(rng) == 2:
+        return rng[0], rng[1]
+    return None, None
 
 
-# ============================================================
-# LOAD DATA
-# ============================================================
+bill_start, bill_end = unpack_range(bill_range)
+bond_start, bond_end = unpack_range(bond_range)
+
+# --- LOAD RANGE-FILTERED DATA ---
+@st.cache_data(ttl=30)
+def load_bills_range(start_d, end_d):
+    if not start_d or not end_d:
+        return pd.DataFrame()
+    q = text('SELECT * FROM public.daily_bills WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+    return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
 @st.cache_data(ttl=30)
-def load_bills_range(start_date, end_date):
-
-    if not start_date or not end_date:
+def load_securities_range(start_d, end_d):
+    if not start_d or not end_d:
         return pd.DataFrame()
+    q = text('SELECT * FROM public.daily_securities WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+    return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
-    query = text(
-        """
-        SELECT *
-        FROM public.daily_bills
-        WHERE "Data_Date" BETWEEN :start_date AND :end_date
-        ORDER BY "Data_Date" DESC
-        """
-    )
-
-    return pd.read_sql(
-        query,
-        engine,
-        params={
-            "start_date": str(start_date),
-            "end_date": str(end_date)
-        }
-    )
+df_bills = load_bills_range(bill_start, bill_end)
+df_securities = load_securities_range(bond_start, bond_end)
 
 
-@st.cache_data(ttl=30)
-def load_securities_range(start_date, end_date):
-
-    if not start_date or not end_date:
-        return pd.DataFrame()
-
-    query = text(
-        """
-        SELECT *
-        FROM public.daily_securities
-        WHERE "Data_Date" BETWEEN :start_date AND :end_date
-        ORDER BY "Data_Date" DESC
-        """
-    )
-
-    return pd.read_sql(
-        query,
-        engine,
-        params={
-            "start_date": str(start_date),
-            "end_date": str(end_date)
-        }
-    )
-
-
-df_bills = load_bills_range(
-    bill_start,
-    bill_end
-)
-
-df_securities = load_securities_range(
-    bond_start,
-    bond_end
-)
-
-
-# ============================================================
-# EXCEL EXPORT
-# ============================================================
-
+# --- EXCEL EXPORT HELPER ---
 def to_excel_bytes(df, sheet_name):
-
     buffer = io.BytesIO()
-
-    export_df = remove_id_columns(df).copy()
-
-    # Fix timezone-aware datetime columns.
-    for col in export_df.columns:
-
-        try:
-
-            if (
-                pd.api.types.is_datetime64tz_dtype(
-                    export_df[col]
-                )
-            ):
-                export_df[col] = (
-                    export_df[col]
-                    .dt
-                    .tz_localize(None)
-                )
-
-        except Exception:
-            pass
-
-    try:
-
-        with pd.ExcelWriter(
-            buffer,
-            engine="openpyxl"
-        ) as writer:
-
-            export_df.to_excel(
-                writer,
-                index=False,
-                sheet_name=sheet_name[:31]
-            )
-
-    except Exception as e:
-
-        st.error(
-            f"Unable to create Excel file: {e}"
-        )
-
-        return None
-
+    export_df = df.copy()
+    for col in export_df.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
+        export_df[col] = export_df[col].dt.tz_localize(None)
+        
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
     return buffer.getvalue()
 
 
-# ============================================================
-# MATURITY CALCULATION
-# ============================================================
-
+# --- MATURITY DETAILS (ID REMOVED & ORDERED SERIAL NUMBER) ---
 def compute_maturity_detail(df, days=30):
-
-    if df.empty:
-        return (
-            pd.DataFrame(),
-            0.0,
-            0
-        )
-
-    required_columns = [
-        "Maturity/ Expiry Date",
-        "Data_Date"
-    ]
-
-    if not all(
-        c in df.columns
-        for c in required_columns
-    ):
-        return (
-            pd.DataFrame(),
-            0.0,
-            0
-        )
+    if df.empty or "Maturity/ Expiry Date" not in df.columns or "Data_Date" not in df.columns:
+        return pd.DataFrame(), 0.0, 0
 
     latest_date = df["Data_Date"].max()
+    snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
 
-    snapshot = df[
-        df["Data_Date"] == latest_date
-    ].copy()
-
-    if "ISIN" in snapshot.columns:
-
-        snapshot = snapshot.drop_duplicates(
-            subset="ISIN"
-        )
-
-    base_date = pd.to_datetime(
-        latest_date,
-        errors="coerce"
-    )
-
-    maturity_date = pd.to_datetime(
-        snapshot["Maturity/ Expiry Date"],
-        errors="coerce"
-    )
-
-    mask = (
-        (maturity_date >= base_date)
-        &
-        (
-            maturity_date
-            <=
-            base_date + pd.Timedelta(days=days)
-        )
-    )
-
-    maturing = snapshot[
-        mask
-    ].copy()
+    base_dt = pd.to_datetime(latest_date, errors="coerce")
+    mat_dt = pd.to_datetime(snapshot["Maturity/ Expiry Date"], errors="coerce")
+    mask = (mat_dt >= base_dt) & (mat_dt <= base_dt + pd.Timedelta(days=days))
+    maturing = snapshot[mask].copy()
 
     if maturing.empty:
-        return (
-            maturing,
-            0.0,
-            0
-        )
+        return maturing, 0.0, 0
 
-    if "Outstanding BDT (in Mill)" in maturing.columns:
+    crore = pd.to_numeric(
+        maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
 
-        outstanding_crore = (
-            clean_number(
-                maturing[
-                    "Outstanding BDT (in Mill)"
-                ]
-            ) / 10
-        )
+    maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], errors="coerce")
+    maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
 
+    cols_to_drop = [col for col in ["id", "ID", "Id", "Data_Date"] if col in maturing.columns]
+    maturing = maturing.drop(columns=cols_to_drop, errors="ignore")
+
+    sl_col = next((c for c in maturing.columns if c.lower() in ["sl. no.", "sl. no", "sl_no", "sl no"]), None)
+    if sl_col:
+        maturing[sl_col] = range(1, len(maturing) + 1)
     else:
+        maturing.insert(0, "Sl. No.", range(1, len(maturing) + 1))
 
-        outstanding_crore = pd.Series(
-            0,
-            index=maturing.index
-        )
+    return maturing, float(crore.sum()), int(maturing["ISIN"].nunique())
 
-    total_crore = outstanding_crore.sum()
 
-    # Sort by maturity date.
-    maturing["_maturity_sort"] = pd.to_datetime(
-        maturing["Maturity/ Expiry Date"],
-        errors="coerce"
-    )
+bills_maturing, bills_maturing_crore, bills_maturing_count = compute_maturity_detail(df_bills)
+bonds_maturing, bonds_maturing_crore, bonds_maturing_count = compute_maturity_detail(df_securities)
 
-    maturing = (
-        maturing
-        .sort_values(
-            "_maturity_sort",
-            ascending=True
-        )
-        .drop(
-            columns="_maturity_sort"
-        )
-    )
+bills_anchor = df_bills["Data_Date"].max() if not df_bills.empty else "N/A"
+bonds_anchor = df_securities["Data_Date"].max() if not df_securities.empty else "N/A"
 
-    # Remove database IDs.
-    maturing = remove_id_columns(
-        maturing
-    )
 
-    # Remove Data_Date from maturity detail.
-    maturing = maturing.drop(
-        columns=["Data_Date"],
-        errors="ignore"
-    )
-
-    # Add serial number.
-    serial_column = next(
-        (
-            c for c in maturing.columns
-            if c.lower() in [
-                "sl. no.",
-                "sl. no",
-                "sl_no",
-                "sl no"
-            ]
-        ),
-        None
-    )
-
-    if serial_column:
-
-        maturing[serial_column] = range(
-            1,
-            len(maturing) + 1
-        )
-
-    else:
-
-        maturing.insert(
-            0,
-            "Sl. No.",
-            range(
-                1,
-                len(maturing) + 1
-            )
-        )
-
-    count = (
-        maturing["ISIN"].nunique()
-        if "ISIN" in maturing.columns
-        else len(maturing)
-    )
-
-    return (
-        maturing,
-        float(total_crore),
-        int(count)
-    )
-
-
-# ============================================================
-# MATURITY RESULTS
-# ============================================================
-
-bills_maturing, bills_maturing_crore, bills_maturing_count = (
-    compute_maturity_detail(
-        df_bills
-    )
-)
-
-bonds_maturing, bonds_maturing_crore, bonds_maturing_count = (
-    compute_maturity_detail(
-        df_securities
-    )
-)
-
-
-bills_anchor = (
-    df_bills["Data_Date"].max()
-    if not df_bills.empty
-    else "N/A"
-)
-
-bonds_anchor = (
-    df_securities["Data_Date"].max()
-    if not df_securities.empty
-    else "N/A"
-)
-
-
-# ============================================================
-# PORTFOLIO KPI CALCULATION
-# ============================================================
-
-def calculate_portfolio_kpis(
-    bills_df,
-    securities_df
-):
-
-    bills = get_latest_snapshot(
-        bills_df
-    )
-
-    securities = get_latest_snapshot(
-        securities_df
-    )
-
-    frames = []
-
-    # ---------------- T-BILLS ----------------
-
-    if not bills.empty:
-
-        if "Outstanding BDT (in Mill)" in bills.columns:
-
-            bills["_Outstanding_Crore"] = (
-                clean_number(
-                    bills[
-                        "Outstanding BDT (in Mill)"
-                    ]
-                ) / 10
-            )
-
-        else:
-
-            bills["_Outstanding_Crore"] = 0
-
-        if "Market Yield" in bills.columns:
-
-            bills["_Yield"] = clean_number(
-                bills["Market Yield"]
-            )
-
-        else:
-
-            bills["_Yield"] = 0
-
-        frames.append(
-            bills
-        )
-
-    # ---------------- BONDS ----------------
-
-    if not securities.empty:
-
-        if "Outstanding BDT (in Mill)" in securities.columns:
-
-            securities["_Outstanding_Crore"] = (
-                clean_number(
-                    securities[
-                        "Outstanding BDT (in Mill)"
-                    ]
-                ) / 10
-            )
-
-        else:
-
-            securities["_Outstanding_Crore"] = 0
-
-        if "Market Yield" in securities.columns:
-
-            securities["_Yield"] = clean_number(
-                securities["Market Yield"]
-            )
-
-        else:
-
-            securities["_Yield"] = 0
-
-        frames.append(
-            securities
-        )
-
-    if not frames:
-
-        return {
-            "outstanding": 0.0,
-            "isins": 0,
-            "yield": 0.0,
-            "maturity": 0.0,
-            "maturity_isins": 0
-        }
-
-    portfolio = pd.concat(
-        frames,
-        ignore_index=True
-    )
-
-    total_outstanding = (
-        portfolio["_Outstanding_Crore"]
-        .sum()
-    )
-
-    if "ISIN" in portfolio.columns:
-
-        total_isins = (
-            portfolio["ISIN"]
-            .nunique()
-        )
-
-    else:
-
-        total_isins = len(
-            portfolio
-        )
-
-    if total_outstanding > 0:
-
-        weighted_yield = (
-            (
-                portfolio["_Yield"]
-                *
-                portfolio["_Outstanding_Crore"]
-            ).sum()
-            /
-            total_outstanding
-        )
-
-    else:
-
-        weighted_yield = 0.0
-
-    maturity_total = (
-        bills_maturing_crore
-        +
-        bonds_maturing_crore
-    )
-
-    maturity_isins = (
-        bills_maturing_count
-        +
-        bonds_maturing_count
-    )
-
-    return {
-        "outstanding": float(
-            total_outstanding
-        ),
-        "isins": int(
-            total_isins
-        ),
-        "yield": float(
-            weighted_yield
-        ),
-        "maturity": float(
-            maturity_total
-        ),
-        "maturity_isins": int(
-            maturity_isins
-        )
-    }
-
-
-portfolio_kpis = calculate_portfolio_kpis(
-    df_bills,
-    df_securities
-)
-
-
-# ============================================================
-# 1. PORTFOLIO KPIs
-# ============================================================
-
-st.markdown("### 📌 Portfolio KPIs")
-
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-
-
-with kpi1:
-
-    st.metric(
-        label="Total Outstanding",
-        value=(
-            f"৳{portfolio_kpis['outstanding']:,.2f} Cr"
-        ),
-        help=(
-            "Total outstanding amount across "
-            "the latest T-Bill and Bond/FRTB snapshots."
-        )
-    )
-
-
-with kpi2:
-
-    st.metric(
-        label="Total ISINs",
-        value=(
-            f"{portfolio_kpis['isins']:,}"
-        ),
-        help=(
-            "Unique ISINs in the latest available snapshot."
-        )
-    )
-
-
-with kpi3:
-
-    st.metric(
-        label="Portfolio Wtd. Yield",
-        value=(
-            f"{portfolio_kpis['yield']:.2f}%"
-        ),
-        help=(
-            "Outstanding-weighted market yield."
-        )
-    )
-
-
-with kpi4:
-
-    st.metric(
-        label="Maturing in 30 Days",
-        value=(
-            f"৳{portfolio_kpis['maturity']:,.2f} Cr"
-        ),
-        delta=(
-            f"{portfolio_kpis['maturity_isins']} ISINs"
-        ),
-        delta_color="off",
-        help=(
-            "Outstanding amount maturing within "
-            "30 days from the latest available snapshot."
-        )
-    )
-
-
-# ============================================================
-# SUMMARY CALCULATION
-# ============================================================
-
-def calculate_summary(
-    df,
-    include_coupon=False
-):
-
-    if df.empty:
-        return None
-
-    if "Data_Date" not in df.columns:
-        return None
-
+# --- SUMMARY COMPUTATION & RENDERERS ---
+def render_bills_summary_table(df):
+    if df.empty or "Data_Date" not in df.columns:
+        st.info("No T-Bill data in this range.")
+        return
+    
     latest_date = df["Data_Date"].max()
+    temp_df = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
+    
+    count = int(temp_df["ISIN"].nunique())
+    
+    temp_df["Outstanding_Crore"] = pd.to_numeric(
+        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+    total_crore = temp_df["Outstanding_Crore"].sum()
+    
+    temp_df["Yield_Val"] = pd.to_numeric(
+        temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    ).fillna(0)
 
-    temp = df[
-        df["Data_Date"] == latest_date
-    ].copy()
-
-    if "ISIN" in temp.columns:
-
-        temp = temp.drop_duplicates(
-            subset="ISIN"
-        )
-
-    if temp.empty:
-        return None
-
-    # Outstanding.
-    if "Outstanding BDT (in Mill)" in temp.columns:
-
-        temp["Outstanding_Crore"] = (
-            clean_number(
-                temp[
-                    "Outstanding BDT (in Mill)"
-                ]
-            ) / 10
-        )
-
+    if total_crore > 0:
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
     else:
-
-        temp["Outstanding_Crore"] = 0
-
-    # Market yield.
-    if "Market Yield" in temp.columns:
-
-        temp["Yield_Val"] = clean_number(
-            temp["Market Yield"]
-        )
-
-    else:
-
-        temp["Yield_Val"] = 0
-
-    total_outstanding = (
-        temp["Outstanding_Crore"]
-        .sum()
-    )
-
-    count = (
-        temp["ISIN"].nunique()
-        if "ISIN" in temp.columns
-        else len(temp)
-    )
-
-    if total_outstanding > 0:
-
-        weighted_yield = (
-            (
-                temp["Yield_Val"]
-                *
-                temp["Outstanding_Crore"]
-            ).sum()
-            /
-            total_outstanding
-        )
-
-    else:
-
         weighted_yield = 0.0
 
-    result = {
-        "Count": int(count),
-        "Amount": float(
-            total_outstanding
-        ),
-        "Yield": float(
-            weighted_yield
-        )
-    }
-
-    # Coupon for bonds/FRTBs.
-    if include_coupon:
-
-        coupon_column = next(
-            (
-                c for c in temp.columns
-                if "coupon" in c.lower()
-            ),
-            None
-        )
-
-        if coupon_column:
-
-            temp["Coupon_Val"] = clean_number(
-                temp[coupon_column]
-            )
-
-            if total_outstanding > 0:
-
-                weighted_coupon = (
-                    (
-                        temp["Coupon_Val"]
-                        *
-                        temp["Outstanding_Crore"]
-                    ).sum()
-                    /
-                    total_outstanding
-                )
-
-            else:
-
-                weighted_coupon = 0.0
-
-            result["Coupon"] = float(
-                weighted_coupon
-            )
-
-        else:
-
-            result["Coupon"] = None
-
-    return latest_date, result
+    st.markdown(f"""
+        <div class="bill-header">Treasury Bills <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {latest_date})</span></div>
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Count</th>
+                    <th>Amount (BDT Cr)</th>
+                    <th>Avg Yields</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{count}</td>
+                    <td>৳{total_crore:,.2f} Cr</td>
+                    <td>{weighted_yield:.2f}%</td>
+                </tr>
+            </tbody>
+        </table>
+    """, unsafe_allow_html=True)
 
 
-# ============================================================
-# 2. MARKET SUMMARY
-# ============================================================
+def render_bonds_summary_table(df):
+    if df.empty or "Data_Date" not in df.columns:
+        st.info("No Bond/FRTB data in this range.")
+        return
+    
+    latest_date = df["Data_Date"].max()
+    temp_df = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
+    
+    count = int(temp_df["ISIN"].nunique())
+    
+    temp_df["Outstanding_Crore"] = pd.to_numeric(
+        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+    total_crore = temp_df["Outstanding_Crore"].sum()
+    
+    temp_df["Yield_Val"] = pd.to_numeric(
+        temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    ).fillna(0)
 
-st.markdown("---")
-
-st.markdown("### 📊 Market Summary")
-
-summary_col1, summary_col2 = st.columns(2)
-
-
-# ============================================================
-# T-BILL SUMMARY
-# ============================================================
-
-with summary_col1:
-
-    st.markdown("#### 📉 Treasury Bills")
-
-    bill_summary = calculate_summary(
-        df_bills,
-        include_coupon=False
-    )
-
-    if bill_summary is not None:
-
-        latest_date, values = bill_summary
-
-        st.caption(
-            f"As of {latest_date}"
-        )
-
-        c1, c2, c3 = st.columns(3)
-
-        with c1:
-
-            st.metric(
-                "ISINs",
-                f"{values['Count']:,}"
-            )
-
-        with c2:
-
-            st.metric(
-                "Outstanding",
-                f"৳{values['Amount']:,.2f} Cr"
-            )
-
-        with c3:
-
-            st.metric(
-                "Wtd. Yield",
-                f"{values['Yield']:.2f}%"
-            )
-
+    if total_crore > 0:
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
     else:
+        weighted_yield = 0.0
 
-        st.info(
-            "No T-Bill data in this range."
-        )
-
-
-# ============================================================
-# BOND / FRTB SUMMARY
-# ============================================================
-
-with summary_col2:
-
-    st.markdown(
-        "#### 📈 Treasury Bonds & FRTBs"
-    )
-
-    bond_summary = calculate_summary(
-        df_securities,
-        include_coupon=True
-    )
-
-    if bond_summary is not None:
-
-        latest_date, values = bond_summary
-
-        st.caption(
-            f"As of {latest_date}"
-        )
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        with c1:
-
-            st.metric(
-                "ISINs",
-                f"{values['Count']:,}"
-            )
-
-        with c2:
-
-            st.metric(
-                "Outstanding",
-                f"৳{values['Amount']:,.2f} Cr"
-            )
-
-        with c3:
-
-            st.metric(
-                "Wtd. Yield",
-                f"{values['Yield']:.2f}%"
-            )
-
-        with c4:
-
-            coupon = values.get(
-                "Coupon"
-            )
-
-            if coupon is None:
-
-                st.metric(
-                    "Wtd. Coupon",
-                    "N/A"
-                )
-
-            else:
-
-                st.metric(
-                    "Wtd. Coupon",
-                    f"{coupon:.2f}%"
-                )
-
+    coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
+    if coupon_col and total_crore > 0:
+        temp_df["Coupon_Val"] = pd.to_numeric(
+            temp_df[coupon_col].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+        ).fillna(0)
+        weighted_coupon = (temp_df["Coupon_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+        coupon_str = f"{weighted_coupon:.2f}%"
     else:
+        coupon_str = "N/A"
 
-        st.info(
-            "No Bond/FRTB data in this range."
-        )
+    st.markdown(f"""
+        <div class="bond-header">Treasury Bonds &amp; FRTBs <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {latest_date})</span></div>
+        <table class="summary-table">
+            <thead>
+                <tr>
+                    <th>Count</th>
+                    <th>Amount (BDT Cr)</th>
+                    <th>Avg Yields</th>
+                    <th>Avg Coupons</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>{count}</td>
+                    <td>৳{total_crore:,.2f} Cr</td>
+                    <td>{weighted_yield:.2f}%</td>
+                    <td>{coupon_str}</td>
+                </tr>
+            </tbody>
+        </table>
+    """, unsafe_allow_html=True)
 
 
-# ============================================================
-# 3. MATURITY SNAPSHOT
-# ============================================================
+# --- 1. MARKET SUMMARY SECTION ---
+st.markdown("#### 📊 Market Summary")
+sum_col1, sum_col2 = st.columns(2)
 
-st.markdown("---")
+with sum_col1:
+    render_bills_summary_table(df_bills)
 
-st.markdown(
-    "### ⏰ Maturity Snapshot — Next 30 Days"
-)
+with sum_col2:
+    render_bonds_summary_table(df_securities)
 
+st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
+# --- 2. MATURITY SNAPSHOT SECTION (UPGRADED METRIC CARDS) ---
+st.markdown("#### ⏰ Maturity Snapshot (Next 30 Days)")
 mat_col1, mat_col2 = st.columns(2)
 
-
-# ============================================================
-# T-BILL MATURITY
-# ============================================================
-
 with mat_col1:
-
-    st.markdown("#### 📉 T-Bills")
-
-    st.caption(
-        f"From latest available snapshot: {bills_anchor}"
-    )
-
-    maturity_metric_col1, maturity_metric_col2 = st.columns(2)
-
-    with maturity_metric_col1:
-
-        st.metric(
-            "Maturing Amount",
-            f"৳{bills_maturing_crore:,.2f} Cr"
-        )
-
-    with maturity_metric_col2:
-
-        st.metric(
-            "ISINs",
-            f"{bills_maturing_count:,}"
-        )
-
+    st.markdown(f"""
+        <div class="custom-metric-card bill-card">
+            <div class="custom-metric-label">T-Bills Maturing (from {bills_anchor})</div>
+            <div class="custom-metric-value">৳ {bills_maturing_crore:,.2f} Cr</div>
+            <div class="custom-metric-delta">📌 {bills_maturing_count} ISINs Maturing</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
     if not bills_maturing.empty:
-
         st.dataframe(
             bills_maturing,
-            use_container_width=True,
-            hide_index=True,
-            height=220
+            use_container_width=True, hide_index=True, height=180,
         )
-
     else:
-
-        st.info(
-            "No T-Bill ISINs maturing "
-            "in the next 30 days."
-        )
-
-
-# ============================================================
-# BOND / FRTB MATURITY
-# ============================================================
+        st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
 with mat_col2:
-
-    st.markdown(
-        "#### 📈 Bonds / FRTBs"
-    )
-
-    st.caption(
-        f"From latest available snapshot: {bonds_anchor}"
-    )
-
-    maturity_metric_col1, maturity_metric_col2 = st.columns(2)
-
-    with maturity_metric_col1:
-
-        st.metric(
-            "Maturing Amount",
-            f"৳{bonds_maturing_crore:,.2f} Cr"
-        )
-
-    with maturity_metric_col2:
-
-        st.metric(
-            "ISINs",
-            f"{bonds_maturing_count:,}"
-        )
+    st.markdown(f"""
+        <div class="custom-metric-card bond-card">
+            <div class="custom-metric-label">Bonds/FRTBs Maturing (from {bonds_anchor})</div>
+            <div class="custom-metric-value">৳ {bonds_maturing_crore:,.2f} Cr</div>
+            <div class="custom-metric-delta">📌 {bonds_maturing_count} ISINs Maturing</div>
+        </div>
+    """, unsafe_allow_html=True)
 
     if not bonds_maturing.empty:
-
         st.dataframe(
             bonds_maturing,
-            use_container_width=True,
-            hide_index=True,
-            height=220
+            use_container_width=True, hide_index=True, height=180,
         )
-
     else:
+        st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
-        st.info(
-            "No Bond/FRTB ISINs maturing "
-            "in the next 30 days."
-        )
+st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-
-# ============================================================
-# 4. DETAIL DATA
-# ============================================================
-
-st.markdown("---")
-
-st.markdown("### 📋 Detailed Data")
-
-
-tab1, tab2 = st.tabs(
-    [
-        "📉 Treasury Bills",
-        "📈 Bonds & FRTBs"
-    ]
-)
-
-
-# ============================================================
-# T-BILL DETAIL
-# ============================================================
+# --- 3. DETAIL TABS WITH EXCEL EXPORT ---
+tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
 
 with tab1:
-
-    range_label = (
-        f"{bill_start} to {bill_end}"
-        if bill_start and bill_end
-        else "N/A"
-    )
-
-    st.subheader(
-        f"Treasury Bills — {range_label}"
-    )
-
+    range_label = f"{bill_start} to {bill_end}" if bill_start and bill_end else "N/A"
+    st.subheader(f"Treasury Bills — {range_label}")
     if not df_bills.empty:
-
-        display_bills = remove_id_columns(
-            df_bills
+        display_bills = df_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_bills.columns], errors="ignore")
+        st.dataframe(display_bills, use_container_width=True)
+        st.download_button(
+            "⬇️ Download T-Bills (Excel)",
+            data=to_excel_bytes(df_bills, "T-Bills"),
+            file_name=f"tbills_{bill_start}_to_{bill_end}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-        st.dataframe(
-            display_bills,
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-        excel_data = to_excel_bytes(
-            df_bills,
-            "T-Bills"
-        )
-
-        if excel_data is not None:
-
-            st.download_button(
-                label="⬇️ Download T-Bills (Excel)",
-                data=excel_data,
-                file_name=(
-                    f"tbills_"
-                    f"{bill_start}_to_"
-                    f"{bill_end}.xlsx"
-                ),
-                mime=(
-                    "application/vnd.openxmlformats-"
-                    "officedocument.spreadsheetml.sheet"
-                ),
-                key="download_bills"
-            )
-
     else:
-
-        st.info(
-            "No T-Bill records available "
-            "for this range."
-        )
-
-
-# ============================================================
-# BOND / FRTB DETAIL
-# ============================================================
+        st.info("No T-Bill records available for this range.")
 
 with tab2:
-
-    range_label = (
-        f"{bond_start} to {bond_end}"
-        if bond_start and bond_end
-        else "N/A"
-    )
-
-    st.subheader(
-        f"Bonds & FRTBs — {range_label}"
-    )
-
+    range_label = f"{bond_start} to {bond_end}" if bond_start and bond_end else "N/A"
+    st.subheader(f"Bonds & FRTBs — {range_label}")
     if not df_securities.empty:
-
-        display_securities = remove_id_columns(
-            df_securities
+        display_sec = df_securities.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_securities.columns], errors="ignore")
+        st.dataframe(display_sec, use_container_width=True)
+        st.download_button(
+            "⬇️ Download Bonds/FRTBs (Excel)",
+            data=to_excel_bytes(df_securities, "Bonds_FRTB"),
+            file_name=f"bonds_frtb_{bond_start}_to_{bond_end}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-
-        st.dataframe(
-            display_securities,
-            use_container_width=True,
-            hide_index=True,
-            height=500
-        )
-
-        excel_data = to_excel_bytes(
-            df_securities,
-            "Bonds_FRTB"
-        )
-
-        if excel_data is not None:
-
-            st.download_button(
-                label="⬇️ Download Bonds/FRTBs (Excel)",
-                data=excel_data,
-                file_name=(
-                    f"bonds_frtb_"
-                    f"{bond_start}_to_"
-                    f"{bond_end}.xlsx"
-                ),
-                mime=(
-                    "application/vnd.openxmlformats-"
-                    "officedocument.spreadsheetml.sheet"
-                ),
-                key="download_bonds"
-            )
-
     else:
-
-        st.info(
-            "No Bond or FRTB records available "
-            "for this range."
-        )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown("---")
-
-st.caption(
-    "GSOM Treasury & Securities Dashboard • "
-    "Data displayed from the latest available snapshots "
-    "within the selected date ranges."
-)
+        st.info("No Bond or FRTB records available for this range.")
