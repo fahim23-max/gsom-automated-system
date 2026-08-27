@@ -249,7 +249,7 @@ try:
     bill_start, bill_end = unpack_range(bill_range)
     bond_start, bond_end = unpack_range(bond_range)
 
-    # --- LOAD RANGE-FILTERED DATA ---
+    # --- LOAD RANGE-FILTERED DATA FOR SUMMARY & TABS ---
     @st.cache_data(ttl=30)
     def load_bills_range(start_d, end_d):
         if not start_d or not end_d:
@@ -267,7 +267,6 @@ try:
     df_bills = load_bills_range(bill_start, bill_end)
     df_securities = load_securities_range(bond_start, bond_end)
 
-    # Split df_securities into FRTBs and Standard Bonds globally
     if not df_securities.empty:
         frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
         df_frtbs = df_securities[frtb_mask]
@@ -306,26 +305,26 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- FAST SQL-CACHED MONTHLY METRICS CALCULATION ---
+    # --- LIGHTNING-FAST LIGHTWEIGHT LEDGER LOADER ---
     @st.cache_data(ttl=300)
     def calculate_monthly_metrics(table_name, is_frtb=None):
-        if table_name == "daily_securities" and is_frtb is not None:
-            if is_frtb:
-                q = text('SELECT * FROM public.daily_securities WHERE EXISTS (SELECT 1 FROM json_each_text(to_json(daily_securities)) WHERE value ILIKE "%FRTB%")')
-            else:
-                q = text('SELECT * FROM public.daily_securities WHERE NOT EXISTS (SELECT 1 FROM json_each_text(to_json(daily_securities)) WHERE value ILIKE "%FRTB%")')
-            sub_df = pd.read_sql(q, engine)
-        else:
-            q = text(f'SELECT * FROM public.{table_name}')
-            sub_df = pd.read_sql(q, engine)
-            
-        return compute_metrics_from_df(sub_df)
-
-    def compute_metrics_from_df(temp_df):
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
-        if temp_df.empty or "ISIN" not in temp_df.columns or "Data_Date" not in temp_df.columns:
-            return pd.DataFrame(columns=cols)
+        
+        if table_name == "daily_securities" and is_frtb is not None:
+            cond = "WHERE UPPER(CAST(t AS TEXT)) LIKE '%FRTB%'" if is_frtb else "WHERE UPPER(CAST(t AS TEXT)) NOT LIKE '%FRTB%'"
+            # Use quick sampling query to prevent pulling heavy raw dumps
+            q = text(f'SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities')
+        else:
+            q = text(f'SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.{table_name}')
             
+        temp_df = pd.read_sql(q, engine)
+        if temp_df.empty:
+            return pd.DataFrame(columns=cols)
+
+        if table_name == "daily_securities" and is_frtb is not None:
+            frtb_check = temp_df.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
+            temp_df = temp_df[frtb_check] if is_frtb else temp_df[~frtb_check]
+
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
