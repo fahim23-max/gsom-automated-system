@@ -47,7 +47,7 @@ def get_available_dates():
             ORDER BY "Data_Date" DESC;
         """)
         result = conn.execute(query).fetchall()
-    return [row[0] for row in result if row[0] is not None]
+    return [row[0] for row in result]
 
 available_dates = get_available_dates()
 
