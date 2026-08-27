@@ -232,16 +232,24 @@ def render_bills_summary_table(df):
         return
     
     latest_date = df["Data_Date"].max()
-    temp_df = df[df["Data_Date"] == latest_date].copy()
+    temp_df = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
     
     count = int(temp_df["ISIN"].nunique())
-    crore = pd.to_numeric(
-        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
-    ).fillna(0).sum() / 10.0
     
-    avg_yield = pd.to_numeric(
+    temp_df["Outstanding_Crore"] = pd.to_numeric(
+        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+    total_crore = temp_df["Outstanding_Crore"].sum()
+    
+    temp_df["Yield_Val"] = pd.to_numeric(
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    ).fillna(0).mean()
+    ).fillna(0)
+
+    # Weighted Average Yield = Sum(Yield * Outstanding) / Sum(Outstanding)
+    if total_crore > 0:
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+    else:
+        weighted_yield = 0.0
 
     st.markdown(f"""
         <div class="bill-header">Treasury Bills <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {latest_date})</span></div>
@@ -256,8 +264,8 @@ def render_bills_summary_table(df):
             <tbody>
                 <tr>
                     <td>{count}</td>
-                    <td>৳{crore:,.2f} Cr</td>
-                    <td>{avg_yield:.2f}%</td>
+                    <td>৳{total_crore:,.2f} Cr</td>
+                    <td>{weighted_yield:.2f}%</td>
                 </tr>
             </tbody>
         </table>
@@ -270,23 +278,33 @@ def render_bonds_summary_table(df):
         return
     
     latest_date = df["Data_Date"].max()
-    temp_df = df[df["Data_Date"] == latest_date].copy()
+    temp_df = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
     
     count = int(temp_df["ISIN"].nunique())
-    crore = pd.to_numeric(
-        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
-    ).fillna(0).sum() / 10.0
     
-    avg_yield = pd.to_numeric(
+    temp_df["Outstanding_Crore"] = pd.to_numeric(
+        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+    total_crore = temp_df["Outstanding_Crore"].sum()
+    
+    temp_df["Yield_Val"] = pd.to_numeric(
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    ).fillna(0).mean()
+    ).fillna(0)
 
+    # Weighted Average Yield = Sum(Yield * Outstanding) / Sum(Outstanding)
+    if total_crore > 0:
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+    else:
+        weighted_yield = 0.0
+
+    # Coupon Column Detection & Weighted Average Coupon Calculation
     coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
-    if coupon_col:
-        avg_coupon = pd.to_numeric(
+    if coupon_col and total_crore > 0:
+        temp_df["Coupon_Val"] = pd.to_numeric(
             temp_df[coupon_col].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-        ).fillna(0).mean()
-        coupon_str = f"{avg_coupon:.2f}%"
+        ).fillna(0)
+        weighted_coupon = (temp_df["Coupon_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+        coupon_str = f"{weighted_coupon:.2f}%"
     else:
         coupon_str = "N/A"
 
@@ -304,8 +322,8 @@ def render_bonds_summary_table(df):
             <tbody>
                 <tr>
                     <td>{count}</td>
-                    <td>৳{crore:,.2f} Cr</td>
-                    <td>{avg_yield:.2f}%</td>
+                    <td>৳{total_crore:,.2f} Cr</td>
+                    <td>{weighted_yield:.2f}%</td>
                     <td>{coupon_str}</td>
                 </tr>
             </tbody>
