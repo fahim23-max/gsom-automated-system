@@ -58,6 +58,41 @@ try:
             font-weight: 600;
             color: #0f172a;
         }
+
+        /* Ledger Table Styling */
+        .ledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            margin-bottom: 12px;
+            font-family: sans-serif;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+        }
+        .ledger-table th {
+            background-color: #f1f5f9;
+            color: #334155;
+            font-weight: 700;
+            text-align: center;
+            padding: 10px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.90rem;
+        }
+        .ledger-table td {
+            text-align: center;
+            padding: 10px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+        }
+        .ledger-table td:first-child {
+            background-color: #f8fafc;
+            font-weight: 700;
+            color: #475569;
+        }
         
         /* Centered Table Headers */
         .bill-header { color: #dc2626; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
@@ -228,6 +263,15 @@ try:
 
     df_bills = load_bills_range(bill_start, bill_end)
     df_securities = load_securities_range(bond_start, bond_end)
+
+    # Split df_securities into FRTBs and Standard Bonds globally
+    if not df_securities.empty:
+        frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
+        df_frtbs = df_securities[frtb_mask]
+        df_bonds = df_securities[~frtb_mask]
+    else:
+        df_frtbs = pd.DataFrame()
+        df_bonds = pd.DataFrame()
 
     # --- EXCEL EXPORT HELPER (ROBUST TIMEZONE STRIPPING) ---
     def to_excel_bytes(df, sheet_name):
@@ -436,19 +480,51 @@ try:
             
         st.markdown(header_html + table_html, unsafe_allow_html=True)
 
+    # --- HTML LEDGER GENERATOR ---
+    def render_monthly_ledger_html(df):
+        if df.empty:
+            st.info("Not enough data to compute monthly metrics for the selected range.")
+            return
+
+        html = '<div style="overflow-x: auto;"><table class="ledger-table">'
+        html += '<thead>'
+        html += '<tr>'
+        html += '<th rowspan="2" style="vertical-align: middle; width: 10%;">Month Year</th>'
+        
+        # Level 0 Headers (Treasury Bills, FRTBs, Treasury Bonds)
+        level0_cols = df.columns.get_level_values(0).unique()
+        for col in level0_cols:
+            colspan = sum(1 for c in df.columns if c[0] == col)
+            if colspan > 0:
+                html += f'<th colspan="{colspan}" style="border-left: 2px solid #cbd5e1; color: #1e293b;">{col}</th>'
+        html += '</tr>'
+        
+        html += '<tr>'
+        # Level 1 Headers (Newly Issued, Reissued, Settled)
+        for idx, col in enumerate(df.columns):
+            border_style = "border-left: 2px solid #cbd5e1;" if idx % 3 == 0 else ""
+            html += f'<th style="{border_style}">{col[1]}</th>'
+        html += '</tr>'
+        html += '</thead>'
+        
+        html += '<tbody>'
+        for idx, row in df.iterrows():
+            html += '<tr>'
+            html += f'<td>{idx}</td>'
+            for col_idx, val in enumerate(row):
+                border_style = "border-left: 2px solid #cbd5e1;" if col_idx % 3 == 0 else ""
+                if val == 0:
+                    html += f'<td style="color: #94a3b8; {border_style}">-</td>'
+                else:
+                    html += f'<td style="{border_style}">{val:,.2f}</td>'
+            html += '</tr>'
+        html += '</tbody></table></div>'
+        
+        st.markdown(html, unsafe_allow_html=True)
+
 
     # --- 1. MARKET SUMMARY SECTION (3-COLUMN SPLIT) ---
     st.markdown("#### 📊 Market Summary")
-    
-    # Split df_securities into FRTBs and Standard Bonds based on string matching
-    if not df_securities.empty:
-        frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
-        df_frtbs = df_securities[frtb_mask]
-        df_bonds = df_securities[~frtb_mask]
-    else:
-        df_frtbs = pd.DataFrame()
-        df_bonds = pd.DataFrame()
-
     sum_col1, sum_col2, sum_col3 = st.columns(3)
 
     with sum_col1:
@@ -461,26 +537,37 @@ try:
         render_summary_block(df_bonds, bond_end, "Treasury Bonds", "bond-header", include_coupon=True)
 
 
-    # --- 2. MONTHLY METRICS LEDGER (NEWLY ISSUED, REISSUED, SETTLED) ---
+    # --- 2. MONTHLY METRICS LEDGER (HTML FORMATTED) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
     st.markdown("#### 📅 Monthly Issuance & Settlement Ledger (BDT Cr)")
     
     bills_monthly = calculate_monthly_metrics(df_bills)
-    bonds_monthly = calculate_monthly_metrics(df_securities)
+    frtbs_monthly = calculate_monthly_metrics(df_frtbs)
+    bonds_monthly = calculate_monthly_metrics(df_bonds)
 
-    if not bills_monthly.empty or not bonds_monthly.empty:
-        # Build the pivot-style MultiIndex columns
-        bills_monthly.columns = pd.MultiIndex.from_product([["Bills"], bills_monthly.columns])
-        bonds_monthly.columns = pd.MultiIndex.from_product([["Bonds"], bonds_monthly.columns])
-        
-        combined_monthly = bills_monthly.join(bonds_monthly, how="outer").fillna(0)
+    dfs_to_join = []
+    if not bills_monthly.empty:
+        bills_monthly.columns = pd.MultiIndex.from_product([["Treasury Bills"], bills_monthly.columns])
+        dfs_to_join.append(bills_monthly)
+    if not frtbs_monthly.empty:
+        frtbs_monthly.columns = pd.MultiIndex.from_product([["FRTBs"], frtbs_monthly.columns])
+        dfs_to_join.append(frtbs_monthly)
+    if not bonds_monthly.empty:
+        bonds_monthly.columns = pd.MultiIndex.from_product([["Treasury Bonds"], bonds_monthly.columns])
+        dfs_to_join.append(bonds_monthly)
+
+    if dfs_to_join:
+        combined_monthly = dfs_to_join[0]
+        for d in dfs_to_join[1:]:
+            combined_monthly = combined_monthly.join(d, how="outer")
+            
+        combined_monthly = combined_monthly.fillna(0)
         combined_monthly.sort_index(ascending=False, inplace=True)
         
         # Format index as Month-Year (e.g. Aug-26)
         combined_monthly.index = combined_monthly.index.strftime("%b-%y")
-        combined_monthly.index.name = "Month Year"
         
-        st.dataframe(combined_monthly.style.format("{:,.2f}"), width="stretch")
+        render_monthly_ledger_html(combined_monthly)
     else:
         st.info("Not enough data to compute monthly metrics for the selected range.")
 
