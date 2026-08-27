@@ -100,7 +100,7 @@ engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 # --- TITLE ---
 st.markdown("""
     <div style="text-align:center; margin-bottom: 1rem;">
-        <h1 style="margin-bottom: 0;">🏛️ GSOM Treasury &amp; Securities Dashboard</h1>
+        <h1 style="margin-bottom: 0;">🏛️ GSOM Daily &amp; Dashboard</h1>
         <p style="color:#64748b; font-size:1.05rem; margin-top:0.25rem;">
             Live data for Government Bonds, FRTBs, and T-Bills
         </p>
