@@ -392,39 +392,62 @@ with sum_col2:
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-# --- YIELD CURVE SECTION ---
-st.markdown("#### 📈 Yield Curve Analysis (Term Structure)")
+# --- HISTORICAL YIELD CURVE SECTION ---
+st.markdown("#### 📈 Historical Yield Curve Term Structure")
 yc_col1, yc_col2 = st.columns(2)
 
-def render_yield_curve_chart(df, target_end_date, title):
-    snapshot, actual_date = get_snapshot_for_target_date(df, target_end_date)
-    if snapshot.empty or "Market Yield" not in snapshot.columns or "Remaining Maturity" not in snapshot.columns:
-        st.info(f"No chart data available for {title}.")
+def render_historical_yield_curve(df, target_end_date, title):
+    if df.empty or "Market Yield" not in df.columns or "Remaining Maturity" not in df.columns or "Data_Date" not in df.columns:
+        st.info(f"No historical chart data available for {title}.")
         return
 
-    chart_df = snapshot[["Securities Name", "Remaining Maturity", "Market Yield"]].copy()
-    chart_df["Market Yield (%)"] = pd.to_numeric(
-        chart_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    )
-    chart_df["Remaining Maturity (Yrs)"] = pd.to_numeric(
-        chart_df["Remaining Maturity"].astype(str), errors="coerce"
-    )
-    chart_df = chart_df.dropna(subset=["Remaining Maturity (Yrs)", "Market Yield (%)"])
-    chart_df = chart_df.sort_values(by="Remaining Maturity (Yrs)")
-
-    if chart_df.empty:
-        st.info(f"Insufficient numeric maturity data for {title}.")
+    # Find available unique dates in the loaded range, sorted descending
+    available_dates = sorted(df["Data_Date"].astype(str).unique(), reverse=True)
+    if not available_dates:
+        st.info(f"No dates found for {title}.")
         return
 
-    st.markdown(f"**{title} Term Structure As of {actual_date}**")
-    chart_data = chart_df.set_index("Remaining Maturity (Yrs)")[["Market Yield (%)"]]
-    st.line_chart(chart_data)
+    # Let user select up to 3 comparative historical dates from the range
+    default_selected = available_dates[:3] # Latest, and up to 2 prior dates
+    selected_curve_dates = st.multiselect(
+        f"Select Comparative Dates for {title}",
+        options=available_dates,
+        default=default_selected,
+        key=f"yc_dates_{title}"
+    )
+
+    if not selected_curve_dates:
+        st.warning("Please select at least one date to display the yield curve.")
+        return
+
+    # Filter frame for selected dates
+    sub_df = df[df["Data_Date"].astype(str).isin(selected_curve_dates)].copy()
+    sub_df["Market Yield (%)"] = pd.to_numeric(
+        sub_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    )
+    sub_df["Remaining Maturity (Yrs)"] = pd.to_numeric(
+        sub_df["Remaining Maturity"].astype(str), errors="coerce"
+    )
+    sub_df = sub_df.dropna(subset=["Remaining Maturity (Yrs)", "Market Yield (%)"])
+
+    if sub_df.empty:
+        st.info(f"Insufficient numeric maturity data across selected dates for {title}.")
+        return
+
+    # Pivot data so each date becomes a separate line column
+    pivot_chart = sub_df.pivot_table(
+        index="Remaining Maturity (Yrs)", 
+        columns="Data_Date", 
+        values="Market Yield (%)"
+    ).sort_index()
+
+    st.line_chart(pivot_chart)
 
 with yc_col1:
-    render_yield_curve_chart(df_bills, bill_end, "Treasury Bills")
+    render_historical_yield_curve(df_bills, bill_end, "Treasury Bills")
 
 with yc_col2:
-    render_yield_curve_chart(df_securities, bond_end, "Treasury Bonds & FRTBs")
+    render_historical_yield_curve(df_securities, bond_end, "Treasury Bonds & FRTBs")
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
