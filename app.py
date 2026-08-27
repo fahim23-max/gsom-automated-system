@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for Background Color, Centered Tables, and Centered Metric Cards
+# Custom CSS for Background Color, Centered Tables, and Metric Styling
 st.markdown("""
     <style>
     /* Full Page Background */
@@ -100,7 +100,7 @@ engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 # --- TITLE ---
 st.markdown("""
     <div style="text-align:center; margin-bottom: 1rem;">
-        <h1 style="margin-bottom: 0;">🏛️ GSOM Daily Dashboard</h1>
+        <h1 style="margin-bottom: 0;">🏛️ GSOM Treasury &amp; Securities Dashboard</h1>
         <p style="color:#64748b; font-size:1.05rem; margin-top:0.25rem;">
             Live data for Government Bonds, FRTBs, and T-Bills
         </p>
@@ -217,7 +217,7 @@ def to_excel_bytes(df, sheet_name):
     return buffer.getvalue()
 
 
-# --- MATURITY DETAILS ---
+# --- MATURITY DETAILS (ID REMOVED & ORDERED SERIAL NUMBER) ---
 def compute_maturity_detail(df, days=30):
     if df.empty or "Maturity/ Expiry Date" not in df.columns or "Data_Date" not in df.columns:
         return pd.DataFrame(), 0.0, 0
@@ -236,6 +236,21 @@ def compute_maturity_detail(df, days=30):
     crore = pd.to_numeric(
         maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
     ).fillna(0) / 10.0
+
+    # Sort maturing items by Maturity Date ascending
+    maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], errors="coerce")
+    maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
+
+    # Remove database ID and Data_Date columns if they exist
+    cols_to_drop = [col for col in ["id", "ID", "Id", "Data_Date"] if col in maturing.columns]
+    maturing = maturing.drop(columns=cols_to_drop, errors="ignore")
+
+    # Ensure Sl. No. column is present and properly sequenced 1, 2, 3...
+    sl_col = next((c for c in maturing.columns if c.lower() in ["sl. no.", "sl. no", "sl_no", "sl no"]), None)
+    if sl_col:
+        maturing[sl_col] = range(1, len(maturing) + 1)
+    else:
+        maturing.insert(0, "Sl. No.", range(1, len(maturing) + 1))
 
     return maturing, float(crore.sum()), int(maturing["ISIN"].nunique())
 
@@ -378,7 +393,7 @@ with mat_col1:
     )
     if not bills_maturing.empty:
         st.dataframe(
-            bills_maturing.drop(columns=["Data_Date"], errors="ignore"),
+            bills_maturing,
             use_container_width=True, hide_index=True, height=180,
         )
     else:
@@ -393,7 +408,7 @@ with mat_col2:
     )
     if not bonds_maturing.empty:
         st.dataframe(
-            bonds_maturing.drop(columns=["Data_Date"], errors="ignore"),
+            bonds_maturing,
             use_container_width=True, hide_index=True, height=180,
         )
     else:
@@ -408,7 +423,9 @@ with tab1:
     range_label = f"{bill_start} to {bill_end}" if bill_start and bill_end else "N/A"
     st.subheader(f"Treasury Bills — {range_label}")
     if not df_bills.empty:
-        st.dataframe(df_bills, use_container_width=True)
+        # Drop raw id from detail tab as well
+        display_bills = df_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_bills.columns], errors="ignore")
+        st.dataframe(display_bills, use_container_width=True)
         st.download_button(
             "⬇️ Download T-Bills (Excel)",
             data=to_excel_bytes(df_bills, "T-Bills"),
@@ -422,7 +439,9 @@ with tab2:
     range_label = f"{bond_start} to {bond_end}" if bond_start and bond_end else "N/A"
     st.subheader(f"Bonds & FRTBs — {range_label}")
     if not df_securities.empty:
-        st.dataframe(df_securities, use_container_width=True)
+        # Drop raw id from detail tab as well
+        display_sec = df_securities.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_securities.columns], errors="ignore")
+        st.dataframe(display_sec, use_container_width=True)
         st.download_button(
             "⬇️ Download Bonds/FRTBs (Excel)",
             data=to_excel_bytes(df_securities, "Bonds_FRTB"),
