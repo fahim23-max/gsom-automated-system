@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for Background Color, Centered Tables, and Metric Styling
+# Custom CSS for Background Color, Centered Tables, and Mobile-Friendly Metric Cards
 st.markdown("""
     <style>
     /* Full Page Background */
@@ -58,14 +58,7 @@ st.markdown("""
     }
     
     /* Centered Table Headers */
-    .bill-header { 
-        color: #dc2626; 
-        font-weight: bold; 
-        font-size: 1.15rem; 
-        margin-bottom: 4px; 
-        text-align: center; 
-    }
-    .bond-header { 
+    .bill-header, .bond-header { 
         color: #dc2626; 
         font-weight: bold; 
         font-size: 1.15rem; 
@@ -73,35 +66,36 @@ st.markdown("""
         text-align: center; 
     }
 
-    /* Centered Streamlit Metric Cards */
-    [data-testid="stMetric"] {
-        background-color: #ffffff;
-        padding: 16px 20px;
-        border-radius: 8px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        text-align: center;
+    /* Custom Forced-Light Metric Cards (Prevents Mobile Dark Mode Color Inversion) */
+    .custom-metric-card {
+        background-color: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-radius: 8px !important;
+        padding: 18px 20px !important;
+        text-align: center !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+        margin-bottom: 10px !important;
     }
-    [data-testid="stMetricLabel"] {
-        display: flex;
-        justify-content: center;
-        text-align: center;
-        width: 100%;
+    .custom-metric-label {
+        font-size: 0.9rem !important;
+        color: #64748b !important;
+        font-weight: 600 !important;
+        margin-bottom: 6px !important;
     }
-    [data-testid="stMetricValue"] {
-        display: flex;
-        justify-content: center;
-        text-align: center;
-        width: 100%;
+    .custom-metric-value {
+        font-size: 1.6rem !important;
+        color: #0f172a !important;
+        font-weight: 700 !important;
+        margin-bottom: 4px !important;
     }
-    [data-testid="stMetricDelta"] {
-        display: flex;
-        justify-content: center;
-        text-align: center;
-        width: 100%;
+    .custom-metric-delta {
+        font-size: 0.85rem !important;
+        color: #475569 !important;
+        background-color: #f1f5f9 !important;
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-weight: 500;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -250,15 +244,12 @@ def compute_maturity_detail(df, days=30):
         maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
     ).fillna(0) / 10.0
 
-    # Sort maturing items by Maturity Date ascending
     maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], errors="coerce")
     maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
 
-    # Remove database ID and Data_Date columns if they exist
     cols_to_drop = [col for col in ["id", "ID", "Id", "Data_Date"] if col in maturing.columns]
     maturing = maturing.drop(columns=cols_to_drop, errors="ignore")
 
-    # Ensure Sl. No. column is present and properly sequenced 1, 2, 3...
     sl_col = next((c for c in maturing.columns if c.lower() in ["sl. no.", "sl. no", "sl_no", "sl no"]), None)
     if sl_col:
         maturing[sl_col] = range(1, len(maturing) + 1)
@@ -295,7 +286,6 @@ def render_bills_summary_table(df):
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
     ).fillna(0)
 
-    # Weighted Average Yield = Sum(Yield * Outstanding) / Sum(Outstanding)
     if total_crore > 0:
         weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
     else:
@@ -341,13 +331,11 @@ def render_bonds_summary_table(df):
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
     ).fillna(0)
 
-    # Weighted Average Yield = Sum(Yield * Outstanding) / Sum(Outstanding)
     if total_crore > 0:
         weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
     else:
         weighted_yield = 0.0
 
-    # Coupon Column Detection & Weighted Average Coupon Calculation
     coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
     if coupon_col and total_crore > 0:
         temp_df["Coupon_Val"] = pd.to_numeric(
@@ -393,17 +381,19 @@ with sum_col2:
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-# --- 2. MATURITY SNAPSHOT SECTION ---
+# --- 2. MATURITY SNAPSHOT SECTION (FIXED HTML CARDS FOR DARK MODE) ---
 st.markdown("#### ⏰ Maturity Snapshot (Next 30 Days)")
 mat_col1, mat_col2 = st.columns(2)
 
 with mat_col1:
-    st.metric(
-        label=f"T-Bills Maturing (from {bills_anchor})",
-        value=f"৳ {bills_maturing_crore:,.2f} Cr",
-        delta=f"{bills_maturing_count} ISINs",
-        delta_color="off"
-    )
+    st.markdown(f"""
+        <div class="custom-metric-card">
+            <div class="custom-metric-label">T-Bills Maturing (from {bills_anchor})</div>
+            <div class="custom-metric-value">৳ {bills_maturing_crore:,.2f} Cr</div>
+            <div class="custom-metric-delta">📌 {bills_maturing_count} ISINs</div>
+        </div>
+    """, unsafe_allow_html=True)
+    
     if not bills_maturing.empty:
         st.dataframe(
             bills_maturing,
@@ -413,12 +403,14 @@ with mat_col1:
         st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
 with mat_col2:
-    st.metric(
-        label=f"Bonds/FRTBs Maturing (from {bonds_anchor})",
-        value=f"৳ {bonds_maturing_crore:,.2f} Cr",
-        delta=f"{bonds_maturing_count} ISINs",
-        delta_color="off"
-    )
+    st.markdown(f"""
+        <div class="custom-metric-card">
+            <div class="custom-metric-label">Bonds/FRTBs Maturing (from {bonds_anchor})</div>
+            <div class="custom-metric-value">৳ {bonds_maturing_crore:,.2f} Cr</div>
+            <div class="custom-metric-delta">📌 {bonds_maturing_count} ISINs</div>
+        </div>
+    """, unsafe_allow_html=True)
+
     if not bonds_maturing.empty:
         st.dataframe(
             bonds_maturing,
