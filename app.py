@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 import pandas as pd
+from datetime import timedelta
 from sqlalchemy import create_engine
 
 # Page Configuration
@@ -9,22 +10,6 @@ st.set_page_config(
     page_icon="📈",
     layout="wide"
 )
-
-# Custom Styling for Proper Alignment and Clean Presentation
-st.markdown("""
-    <style>
-        .metric-card {
-            background-color: #f8f9fa;
-            border: 1px solid #e9ecef;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-        }
-        .stDataFrame {
-            border-radius: 8px;
-        }
-    </style>
-""", unsafe_allow_html=True)
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -93,9 +78,11 @@ with tab_bonds:
                     bonds_df["Market Yield Num"] = pd.to_numeric(bonds_df["Market Yield"], errors="coerce")
                     bonds_df["Outstanding Num"] = pd.to_numeric(bonds_df["Outstanding BDT (in Mill)"], errors="coerce")
                     bonds_df["Outstanding (Crore)"] = bonds_df["Outstanding Num"] / 10.0
+                    bonds_df["Maturity Date Parsed"] = pd.to_datetime(bonds_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
+                    bonds_df["Data_Date_Parsed"] = pd.to_datetime(bonds_df["Data_Date"])
 
+                    # Summary by Instrument Type
                     st.markdown("### 📈 Summary by Instrument Type")
-                    
                     summary_df = bonds_df.groupby("Securities Type").agg(
                         Instrument_Count=("ISIN", "count"),
                         Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
@@ -105,11 +92,29 @@ with tab_bonds:
                     summary_df["Total_Outstanding_Crore"] = summary_df["Total_Outstanding_Crore"].map("{:,.2f} Cr".format)
                     summary_df["Average_Yield"] = summary_df["Average_Yield"].map("{:.2f}%".format)
                     summary_df.columns = ["Securities Type", "Total Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
-
                     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
+                    # Maturities in Next 30 Days (Anchored to Highest Date in View)
+                    baseline_date = bonds_df["Data_Date_Parsed"].max()
+                    thirty_days_later = baseline_date + timedelta(days=30)
+                    
+                    maturing_bonds = bonds_df[
+                        (bonds_df["Maturity Date Parsed"] >= baseline_date) & 
+                        (bonds_df["Maturity Date Parsed"] <= thirty_days_later)
+                    ]
+
+                    st.markdown(f"### ⏳ Maturities in Next 30 Days (from highest date: {baseline_date.strftime('%Y-%m-%d')})")
+                    if not maturing_bonds.empty:
+                        total_maturing_crore = maturing_bonds["Outstanding (Crore)"].sum()
+                        st.metric(label="Total Amount Maturing", value=f"{total_maturing_crore:,.2f} Crore BDT", delta=f"{len(maturing_bonds)} Instruments")
+                        
+                        display_mat_bonds = maturing_bonds.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
+                        st.dataframe(display_mat_bonds, use_container_width=True)
+                    else:
+                        st.info("No bond instruments maturing in the 30 days following the highest date in this range.")
+
                     st.markdown("### 📋 Detailed Records")
-                    display_bonds = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore")
+                    display_bonds = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bonds, use_container_width=True)
 
                     csv_data = display_bonds.to_csv(index=False).encode('utf-8')
@@ -172,9 +177,11 @@ with tab_bills:
                     bills_df["Market Yield Num"] = pd.to_numeric(bills_df["Market Yield"], errors="coerce")
                     bills_df["Outstanding Num"] = pd.to_numeric(bills_df["Outstanding BDT (in Mill)"], errors="coerce")
                     bills_df["Outstanding (Crore)"] = bills_df["Outstanding Num"] / 10.0
+                    bills_df["Maturity Date Parsed"] = pd.to_datetime(bills_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
+                    bills_df["Data_Date_Parsed"] = pd.to_datetime(bills_df["Data_Date"])
 
+                    # Summary by Tenor Type
                     st.markdown("### 📈 Summary by Tenor Type")
-                    
                     bill_summary = bills_df.groupby("Securities Type").agg(
                         Instrument_Count=("ISIN", "count"),
                         Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
@@ -184,18 +191,36 @@ with tab_bills:
                     bill_summary["Total_Outstanding_Crore"] = bill_summary["Total_Outstanding_Crore"].map("{:,.2f} Cr".format)
                     bill_summary["Average_Yield"] = bill_summary["Average_Yield"].map("{:.2f}%".format)
                     bill_summary.columns = ["Securities Type", "Total Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
-
                     st.dataframe(bill_summary, use_container_width=True, hide_index=True)
 
+                    # Maturities in Next 30 Days (Anchored to Highest Date in View)
+                    baseline_bill_date = bills_df["Data_Date_Parsed"].max()
+                    thirty_days_later_bills = baseline_bill_date + timedelta(days=30)
+                    
+                    maturing_bills = bills_df[
+                        (bills_df["Maturity Date Parsed"] >= baseline_bill_date) & 
+                        (bills_df["Maturity Date Parsed"] <= thirty_days_later_bills)
+                    ]
+
+                    st.markdown(f"### ⏳ Maturities in Next 30 Days (from highest date: {baseline_bill_date.strftime('%Y-%m-%d')})")
+                    if not maturing_bills.empty:
+                        total_mat_bills_crore = maturing_bills["Outstanding (Crore)"].sum()
+                        st.metric(label="Total T-Bills Maturing", value=f"{total_mat_bills_crore:,.2f} Crore BDT", delta=f"{len(maturing_bills)} Bills")
+                        
+                        display_mat_bills = maturing_bills.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
+                        st.dataframe(display_mat_bills, use_container_width=True)
+                    else:
+                        st.info("No Treasury Bills maturing in the 30 days following the highest date in this range.")
+
                     st.markdown("### 📋 Detailed Records")
-                    display_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore")
+                    display_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bills, use_container_width=True)
 
                     csv_bills = display_bills.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download T-Bill Data (CSV)", data=csv_bills, file_name="tbills_valuation_report.csv", mime="text/csv", key="dl_bills")
                 else:
-                    st.info("No T-Bill records found for the selected range. Please run the workflow action to populate data.")
+                    st.info("No T-Bill records found for the selected range.")
             else:
-                st.info("No T-Bill records found in the database yet. Trigger the GitHub Action scraper to extract data.")
+                st.info("No T-Bill records found in the database yet.")
         except Exception as e:
             st.error(f"Error querying T-Bills: {e}")
