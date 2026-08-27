@@ -208,35 +208,38 @@ try:
         start = max(mn, mx - timedelta(days=lookback_days))
         return start, mx
 
-    # --- DATE RANGE PICKERS ---
-    st.markdown("#### 🔎 Select Date Range")
-    range_col1, range_col2 = st.columns(2)
+    # --- DATE RANGE PICKERS (WRAPPED IN FORM) ---
+    with st.form("search_form"):
+        st.markdown("#### 🔎 Select Date Range")
+        range_col1, range_col2 = st.columns(2)
 
-    with range_col1:
-        if bill_min:
-            b_start_default, b_end_default = default_range(bill_min, bill_max)
-            bill_range = st.date_input(
-                "📅 T-Bill Date Range",
-                value=(b_start_default, b_end_default),
-                min_value=to_date(bill_min),
-                max_value=to_date(bill_max),
-            )
-        else:
-            bill_range = None
-            st.info("No T-Bill dates available.")
+        with range_col1:
+            if bill_min:
+                b_start_default, b_end_default = default_range(bill_min, bill_max)
+                bill_range = st.date_input(
+                    "📅 T-Bill Date Range",
+                    value=(b_start_default, b_end_default),
+                    min_value=to_date(bill_min),
+                    max_value=to_date(bill_max),
+                )
+            else:
+                bill_range = None
+                st.info("No T-Bill dates available.")
 
-    with range_col2:
-        if sec_min:
-            s_start_default, s_end_default = default_range(sec_min, sec_max)
-            bond_range = st.date_input(
-                "📅 Bond / FRTB Date Range",
-                value=(s_start_default, s_end_default),
-                min_value=to_date(sec_min),
-                max_value=to_date(sec_max),
-            )
-        else:
-            bond_range = None
-            st.info("No Bond/FRTB dates available.")
+        with range_col2:
+            if sec_min:
+                s_start_default, s_end_default = default_range(sec_min, sec_max)
+                bond_range = st.date_input(
+                    "📅 Bond / FRTB Date Range",
+                    value=(s_start_default, s_end_default),
+                    min_value=to_date(sec_min),
+                    max_value=to_date(sec_max),
+                )
+            else:
+                bond_range = None
+                st.info("No Bond/FRTB dates available.")
+        
+        submitted = st.form_submit_button("🔍 Search", type="primary")
 
     def unpack_range(rng):
         if isinstance(rng, tuple) and len(rng) == 2:
