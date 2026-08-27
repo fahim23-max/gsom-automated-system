@@ -115,7 +115,7 @@ try:
     # Database Connection
     DATABASE_URL = os.environ.get("DATABASE_URL")
     if not DATABASE_URL:
-        st.error("DATABASE_URL secret is missing from Streamlit Secrets/Environment!")
+        st.error("DATABASE_URL secret is missing from Streamlit Secrets!")
         st.stop()
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
@@ -201,14 +201,14 @@ try:
     def load_bills_range(start_d, end_d):
         if not start_d or not end_d:
             return pd.DataFrame()
-        q = text('SELECT * FROM public.daily_bills WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        q = text('SELECT * FROM public.daily_bills WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
     @st.cache_data(ttl=30)
     def load_securities_range(start_d, end_d):
         if not start_d or not end_d:
             return pd.DataFrame()
-        q = text('SELECT * FROM public.daily_securities WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        q = text('SELECT * FROM public.daily_securities WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
     df_bills = load_bills_range(bill_start, bill_end)
@@ -218,9 +218,12 @@ try:
     def to_excel_bytes(df, sheet_name):
         buffer = io.BytesIO()
         export_df = df.copy()
+        
+        # Safely remove timezones for Excel compatibility without triggering deprecation warnings
         for col in export_df.columns:
-            if pd.api.types.is_datetime64_any_dtype(export_df[col]):
-                export_df[col] = pd.to_datetime(export_df[col]).dt.tz_localize(None)
+            if isinstance(export_df[col].dtype, pd.DatetimeTZDtype):
+                export_df[col] = export_df[col].dt.tz_localize(None)
+                
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
         return buffer.getvalue()
@@ -251,7 +254,8 @@ try:
             return pd.DataFrame(), 0.0, 0, anchor_date
 
         base_dt = pd.to_datetime(anchor_date, errors="coerce")
-        mat_dt = pd.to_datetime(snapshot["Maturity/ Expiry Date"], errors="coerce")
+        # Added format="mixed" to prevent Dateutil warnings in logs
+        mat_dt = pd.to_datetime(snapshot["Maturity/ Expiry Date"], format="mixed", errors="coerce")
         mask = (mat_dt >= base_dt) & (mat_dt <= base_dt + pd.Timedelta(days=days))
         maturing = snapshot[mask].copy()
 
@@ -262,7 +266,7 @@ try:
             maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
         ).fillna(0) / 10.0
 
-        maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], errors="coerce")
+        maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], format="mixed", errors="coerce")
         maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
 
         cols_to_drop = [col for col in ["id", "ID", "Id", "Data_Date"] if col in maturing.columns]
