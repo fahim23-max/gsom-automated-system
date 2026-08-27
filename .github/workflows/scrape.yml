@@ -1,15 +1,16 @@
-name: Daily Scraper
+name: GSOM Daily Scraper
 
 on:
-  workflow_dispatch:
   schedule:
-    - cron: '0 0 * * *'
+    # 04:10 UTC = 10:10 AM BST (UTC+6), Sunday to Thursday
+    - cron: '10 4 * * 0-4'
+  workflow_dispatch:
 
 jobs:
-  run-scraper:
+  scrape:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repo
+      - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -19,10 +20,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install pandas requests sqlalchemy openpyxl playwright psycopg2-binary lxml html5lib beautifulsoup4
-          playwright install chromium
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
 
-      - name: Run script
+      - name: Run GSOM Scrapers
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python scraper.py
+        run: |
+          python scraper.py
+          python scraper_bills.py
