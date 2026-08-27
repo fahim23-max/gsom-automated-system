@@ -13,35 +13,61 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for clean, centered tables and metric styling
+# Custom CSS for Background Color, Centered Tables, and Metric Styling
 st.markdown("""
     <style>
+    /* Full Page Background */
+    .stApp {
+        background-color: #f8fafc !important;
+    }
+    
+    /* Global App Container */
+    .main .block-container {
+        padding-top: 1.5rem;
+        padding-bottom: 2.5rem;
+    }
+
+    /* Summary Table Styling */
     .summary-table {
         width: 100%;
         border-collapse: collapse;
         margin-top: 8px;
         margin-bottom: 12px;
         font-family: sans-serif;
+        background-color: #ffffff;
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06);
     }
     .summary-table th {
         background-color: #f1f5f9;
-        color: #1e293b;
+        color: #334155;
         font-weight: 700;
         text-align: center;
         padding: 10px;
-        border: 1px solid #cbd5e1;
+        border: 1px solid #e2e8f0;
         font-size: 0.95rem;
     }
     .summary-table td {
         text-align: center;
         padding: 12px;
-        border: 1px solid #cbd5e1;
+        border: 1px solid #e2e8f0;
         font-size: 1.15rem;
         font-weight: 600;
         color: #0f172a;
     }
+    
     .bill-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
     .bond-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
+
+    /* Streamlit Metric Cards Background */
+    [data-testid="stMetric"] {
+        background-color: #ffffff;
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -53,7 +79,7 @@ engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 st.markdown("""
     <div style="text-align:center; margin-bottom: 1rem;">
         <h1 style="margin-bottom: 0;">🏛️ GSOM Treasury &amp; Securities Dashboard</h1>
-        <p style="color:#6b7280; font-size:1.05rem; margin-top:0.25rem;">
+        <p style="color:#64748b; font-size:1.05rem; margin-top:0.25rem;">
             Live data for Government Bonds, FRTBs, and T-Bills
         </p>
     </div>
@@ -255,7 +281,6 @@ def render_bonds_summary_table(df):
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
     ).fillna(0).mean()
 
-    # Find coupon column if available
     coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
     if coupon_col:
         avg_coupon = pd.to_numeric(
