@@ -266,6 +266,7 @@ def render_summary_cards(summary_df, empty_message, latest_label, shades):
             </div>
         """
     cards_html += "</div>"
+    # FIXED: Added unsafe_allow_html=True below so cards render as HTML instead of raw text code
     st.markdown(cards_html, unsafe_allow_html=True)
 
 
