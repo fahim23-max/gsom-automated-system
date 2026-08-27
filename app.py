@@ -404,7 +404,7 @@ try:
         """, unsafe_allow_html=True)
         
         if not bills_maturing.empty:
-            st.dataframe(bills_maturing, hide_index=True, height=180)
+            st.dataframe(bills_maturing, hide_index=True)
         else:
             st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -418,7 +418,7 @@ try:
         """, unsafe_allow_html=True)
 
         if not bonds_maturing.empty:
-            st.dataframe(bonds_maturing, hide_index=True, height=180)
+            st.dataframe(bonds_maturing, hide_index=True)
         else:
             st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
