@@ -68,7 +68,34 @@ def load_data_for_date(date_str):
 
 df_bills, df_securities = load_data_for_date(selected_date)
 
-# --- SUMMARY BOX & TABLE PROCESSING ---
+# --- MATURITY IN NEXT 30 DAYS LOGIC ---
+def calculate_maturing_volume(df_b, df_s, base_date_str):
+    combined_df = pd.concat([df_b, df_s], ignore_index=True)
+    if combined_df.empty or "Maturity/ Expiry Date" not in combined_df.columns:
+        return 0.0, 0
+    
+    base_dt = pd.to_datetime(base_date_str, errors="coerce")
+    if pd.isna(base_dt):
+        return 0.0, 0
+        
+    mat_dt = pd.to_datetime(combined_df["Maturity/ Expiry Date"], errors="coerce")
+    
+    # Filter items maturing between base date and next 30 days
+    mask = (mat_dt >= base_dt) & (mat_dt <= (base_dt + pd.Timedelta(days=30)))
+    maturing_subset = combined_df[mask].copy()
+    
+    if maturing_subset.empty:
+        return 0.0, 0
+        
+    maturing_subset["Crore_Val"] = pd.to_numeric(
+        maturing_subset["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+    
+    return float(maturing_subset["Crore_Val"].sum()), len(maturing_subset)
+
+maturing_crore, maturing_count = calculate_maturing_volume(df_bills, df_securities, selected_date)
+
+# --- SUMMARY BOX & TABLES ---
 st.markdown(f"""
     <div style="
         background-color: #f8f9fa; 
@@ -93,12 +120,18 @@ st.markdown(f"""
         </h4>
 """, unsafe_allow_html=True)
 
-# Helper function to clean numeric strings and build summary aggregates
+# 30-Day Maturity Callout Metric Card inside Summary
+st.metric(
+    label="⏰ Maturing Within Next 30 Days", 
+    value=f"৳ {maturing_crore:,.2f} Crore", 
+    delta=f"{maturing_count} Instruments Maturing"
+)
+st.markdown("<hr style='margin: 15px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
+
 def compute_summary(df, type_col):
     if df.empty:
         return pd.DataFrame(columns=["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"])
     
-    # Clean numeric columns for calculation
     temp_df = df.copy()
     temp_df["Outstanding_Crore"] = pd.to_numeric(
         temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
