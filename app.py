@@ -150,10 +150,8 @@ if not bill_min and not sec_min:
     st.warning("No data found in the database. Please check your tables or run scrapers.")
     st.stop()
 
-
 def to_date(s):
     return pd.to_datetime(s).date() if s else None
-
 
 def default_range(min_s, max_s, lookback_days=30):
     mn, mx = to_date(min_s), to_date(max_s)
@@ -161,7 +159,6 @@ def default_range(min_s, max_s, lookback_days=30):
         return None, None
     start = max(mn, mx - timedelta(days=lookback_days))
     return start, mx
-
 
 # --- DATE RANGE PICKERS ---
 st.markdown("#### 🔎 Select Date Range")
@@ -193,12 +190,10 @@ with range_col2:
         bond_range = None
         st.info("No Bond/FRTB dates available.")
 
-
 def unpack_range(rng):
     if isinstance(rng, tuple) and len(rng) == 2:
         return rng[0], rng[1]
     return None, None
-
 
 bill_start, bill_end = unpack_range(bill_range)
 bond_start, bond_end = unpack_range(bond_range)
@@ -221,43 +216,48 @@ def load_securities_range(start_d, end_d):
 df_bills = load_bills_range(bill_start, bill_end)
 df_securities = load_securities_range(bond_start, bond_end)
 
-
 # --- EXCEL EXPORT HELPER ---
 def to_excel_bytes(df, sheet_name):
     buffer = io.BytesIO()
     export_df = df.copy()
     for col in export_df.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
         export_df[col] = export_df[col].dt.tz_localize(None)
-        
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
     return buffer.getvalue()
 
-
-# --- HELPER TO GET LATEST SNAPSHOT PER ISIN WITHIN RANGE ---
-def get_latest_snapshot(df):
+# --- STRICT TARGET DATE ANCHORING ---
+def get_snapshot_for_target_date(df, target_date_str):
     if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
-        return pd.DataFrame()
-    # Sort by date descending so the first occurrence of each ISIN is its latest date in the range
-    sorted_df = df.sort_values(by="Data_Date", ascending=False)
-    return sorted_df.drop_duplicates(subset=["ISIN"], keep="first").copy()
-
+        return pd.DataFrame(), "N/A"
+    
+    exact_match = df[df["Data_Date"].astype(str) == str(target_date_str)]
+    if not exact_match.empty:
+        snapshot = exact_match.drop_duplicates(subset=["ISIN"], keep="first").copy()
+        return snapshot, str(target_date_str)
+    
+    valid_dates = df[df["Data_Date"].astype(str) <= str(target_date_str)]
+    if valid_dates.empty:
+        latest_date = df["Data_Date"].max()
+    else:
+        latest_date = valid_dates["Data_Date"].max()
+        
+    snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
+    return snapshot, str(latest_date)
 
 # --- MATURITY DETAILS ---
-def compute_maturity_detail(df, days=30):
-    if df.empty or "Maturity/ Expiry Date" not in df.columns or "Data_Date" not in df.columns:
-        return pd.DataFrame(), 0.0, 0
+def compute_maturity_detail(df, target_end_date, days=30):
+    snapshot, anchor_date = get_snapshot_for_target_date(df, target_end_date)
+    if snapshot.empty or "Maturity/ Expiry Date" not in snapshot.columns:
+        return pd.DataFrame(), 0.0, 0, anchor_date
 
-    latest_date = df["Data_Date"].max()
-    snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
-
-    base_dt = pd.to_datetime(latest_date, errors="coerce")
+    base_dt = pd.to_datetime(anchor_date, errors="coerce")
     mat_dt = pd.to_datetime(snapshot["Maturity/ Expiry Date"], errors="coerce")
     mask = (mat_dt >= base_dt) & (mat_dt <= base_dt + pd.Timedelta(days=days))
     maturing = snapshot[mask].copy()
 
     if maturing.empty:
-        return maturing, 0.0, 0
+        return maturing, 0.0, 0, anchor_date
 
     crore = pd.to_numeric(
         maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
@@ -275,44 +275,37 @@ def compute_maturity_detail(df, days=30):
     else:
         maturing.insert(0, "Sl. No.", range(1, len(maturing) + 1))
 
-    return maturing, float(crore.sum()), int(maturing["ISIN"].nunique())
+    return maturing, float(crore.sum()), int(maturing["ISIN"].nunique()), anchor_date
 
+bills_maturing, bills_maturing_crore, bills_maturing_count, bills_anchor = compute_maturity_detail(df_bills, bill_end)
+bonds_maturing, bonds_maturing_crore, bonds_maturing_count, bonds_anchor = compute_maturity_detail(df_securities, bond_end)
 
-bills_maturing, bills_maturing_crore, bills_maturing_count = compute_maturity_detail(df_bills)
-bonds_maturing, bonds_maturing_crore, bonds_maturing_count = compute_maturity_detail(df_securities)
-
-bills_anchor = df_bills["Data_Date"].max() if not df_bills.empty else "N/A"
-bonds_anchor = df_securities["Data_Date"].max() if not df_securities.empty else "N/A"
-
-
-# --- SUMMARY COMPUTATION & RENDERERS (DEDUPLICATED BY LATEST SNAPSHOT PER ISIN) ---
-def render_bills_summary_table(df):
+# --- SUMMARY COMPUTATION & RENDERERS ---
+def render_bills_summary_table(df, target_end_date):
     if df.empty or "Data_Date" not in df.columns:
         st.info("No T-Bill data in this range.")
         return
     
-    # Get latest snapshot per ISIN across the range
-    temp_df = get_latest_snapshot(df)
-    latest_date = df["Data_Date"].max()
+    temp_df, actual_date = get_snapshot_for_target_date(df, target_end_date)
+    count = int(temp_df["ISIN"].nunique()) if not temp_df.empty else 0
     
-    count = int(temp_df["ISIN"].nunique())
-    
-    temp_df["Outstanding_Crore"] = pd.to_numeric(
-        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
-    ).fillna(0) / 10.0
-    total_crore = temp_df["Outstanding_Crore"].sum()
-    
-    temp_df["Yield_Val"] = pd.to_numeric(
-        temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    ).fillna(0)
+    if count > 0:
+        temp_df["Outstanding_Crore"] = pd.to_numeric(
+            temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+        ).fillna(0) / 10.0
+        total_crore = temp_df["Outstanding_Crore"].sum()
+        
+        temp_df["Yield_Val"] = pd.to_numeric(
+            temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+        ).fillna(0)
 
-    if total_crore > 0:
-        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore if total_crore > 0 else 0.0
     else:
+        total_crore = 0.0
         weighted_yield = 0.0
 
     st.markdown(f"""
-        <div class="bill-header">Treasury Bills <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {latest_date})</span></div>
+        <div class="bill-header">Treasury Bills <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
         <table class="summary-table">
             <thead>
                 <tr>
@@ -331,44 +324,42 @@ def render_bills_summary_table(df):
         </table>
     """, unsafe_allow_html=True)
 
-
-def render_bonds_summary_table(df):
+def render_bonds_summary_table(df, target_end_date):
     if df.empty or "Data_Date" not in df.columns:
         st.info("No Bond/FRTB data in this range.")
         return
     
-    # Get latest snapshot per ISIN across the range
-    temp_df = get_latest_snapshot(df)
-    latest_date = df["Data_Date"].max()
+    temp_df, actual_date = get_snapshot_for_target_date(df, target_end_date)
+    count = int(temp_df["ISIN"].nunique()) if not temp_df.empty else 0
     
-    count = int(temp_df["ISIN"].nunique())
-    
-    temp_df["Outstanding_Crore"] = pd.to_numeric(
-        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
-    ).fillna(0) / 10.0
-    total_crore = temp_df["Outstanding_Crore"].sum()
-    
-    temp_df["Yield_Val"] = pd.to_numeric(
-        temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    ).fillna(0)
-
-    if total_crore > 0:
-        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
-    else:
-        weighted_yield = 0.0
-
-    coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
-    if coupon_col and total_crore > 0:
-        temp_df["Coupon_Val"] = pd.to_numeric(
-            temp_df[coupon_col].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    if count > 0:
+        temp_df["Outstanding_Crore"] = pd.to_numeric(
+            temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+        ).fillna(0) / 10.0
+        total_crore = temp_df["Outstanding_Crore"].sum()
+        
+        temp_df["Yield_Val"] = pd.to_numeric(
+            temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
         ).fillna(0)
-        weighted_coupon = (temp_df["Coupon_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
-        coupon_str = f"{weighted_coupon:.2f}%"
+
+        weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore if total_crore > 0 else 0.0
+
+        coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
+        if coupon_col and total_crore > 0:
+            temp_df["Coupon_Val"] = pd.to_numeric(
+                temp_df[coupon_col].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+            ).fillna(0)
+            weighted_coupon = (temp_df["Coupon_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
+            coupon_str = f"{weighted_coupon:.2f}%"
+        else:
+            coupon_str = "N/A"
     else:
+        total_crore = 0.0
+        weighted_yield = 0.0
         coupon_str = "N/A"
 
     st.markdown(f"""
-        <div class="bond-header">Treasury Bonds &amp; FRTBs <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {latest_date})</span></div>
+        <div class="bond-header">Treasury Bonds &amp; FRTBs <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
         <table class="summary-table">
             <thead>
                 <tr>
@@ -389,16 +380,51 @@ def render_bonds_summary_table(df):
         </table>
     """, unsafe_allow_html=True)
 
-
 # --- 1. MARKET SUMMARY SECTION ---
 st.markdown("#### 📊 Market Summary")
 sum_col1, sum_col2 = st.columns(2)
 
 with sum_col1:
-    render_bills_summary_table(df_bills)
+    render_bills_summary_table(df_bills, bill_end)
 
 with sum_col2:
-    render_bonds_summary_table(df_securities)
+    render_bonds_summary_table(df_securities, bond_end)
+
+st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
+
+# --- YIELD CURVE SECTION ---
+st.markdown("#### 📈 Yield Curve Analysis (Term Structure)")
+yc_col1, yc_col2 = st.columns(2)
+
+def render_yield_curve_chart(df, target_end_date, title):
+    snapshot, actual_date = get_snapshot_for_target_date(df, target_end_date)
+    if snapshot.empty or "Market Yield" not in snapshot.columns or "Remaining Maturity" not in snapshot.columns:
+        st.info(f"No chart data available for {title}.")
+        return
+
+    chart_df = snapshot[["Securities Name", "Remaining Maturity", "Market Yield"]].copy()
+    chart_df["Market Yield (%)"] = pd.to_numeric(
+        chart_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    )
+    chart_df["Remaining Maturity (Yrs)"] = pd.to_numeric(
+        chart_df["Remaining Maturity"].astype(str), errors="coerce"
+    )
+    chart_df = chart_df.dropna(subset=["Remaining Maturity (Yrs)", "Market Yield (%)"])
+    chart_df = chart_df.sort_values(by="Remaining Maturity (Yrs)")
+
+    if chart_df.empty:
+        st.info(f"Insufficient numeric maturity data for {title}.")
+        return
+
+    st.markdown(f"**{title} Term Structure As of {actual_date}**")
+    chart_data = chart_df.set_index("Remaining Maturity (Yrs)")[["Market Yield (%)"]]
+    st.line_chart(chart_data)
+
+with yc_col1:
+    render_yield_curve_chart(df_bills, bill_end, "Treasury Bills")
+
+with yc_col2:
+    render_yield_curve_chart(df_securities, bond_end, "Treasury Bonds & FRTBs")
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
