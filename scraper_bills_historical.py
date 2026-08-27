@@ -115,8 +115,8 @@ async def scrape_historical():
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
 
-        start_date = datetime.strptime("2018-01-01", "%Y-%m-%d").date()
-        end_date = datetime.strptime("2026-08-26", "%Y-%m-%d").date()
+        start_date = datetime.strptime("2025-01-01", "%Y-%m-%d").date()
+        end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
 
         queue = asyncio.Queue()
         current_date = start_date
