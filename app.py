@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 
 # Page Configuration
 st.set_page_config(
-    page_title="GSOM Treasury Dashboard",
+    page_title="GSOM Dashboard",
     page_icon="📈",
     layout="wide"
 )
