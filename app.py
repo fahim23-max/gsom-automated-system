@@ -189,37 +189,18 @@ def render_maturity_card(title, anchor_label, crore, count, color_start, color_e
             color: white;
             box-shadow: 0 3px 10px rgba(0,0,0,0.12);
         ">
-            <div style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.06em; opacity:0.9;">
+            <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
                 ⏰ {title} — Maturing in 30 Days (from {anchor_label})
             </div>
-            <div style="font-size:1.6rem; font-weight:700; margin-top:2px;">
+            <div style="font-size:2.0rem; font-weight:800; margin-top:4px;">
                 ৳ {crore:,.2f} Cr &nbsp;
-                <span style="font-size:0.95rem; font-weight:400; opacity:0.9;">({count} ISINs)</span>
+                <span style="font-size:1.1rem; font-weight:400; opacity:0.92;">({count} ISINs)</span>
             </div>
         </div>
     """, unsafe_allow_html=True)
 
 
-st.markdown("#### ⏰ Maturity Snapshot (next 30 days)")
-mat_col1, mat_col2 = st.columns(2)
-with mat_col1:
-    render_maturity_card("T-Bills", bills_anchor, bills_maturing_crore, bills_maturing_count, "#f97316", "#ea580c")
-    if not bills_maturing.empty:
-        st.dataframe(bills_maturing.drop(columns=["Data_Date"], errors="ignore"), use_container_width=True, hide_index=True)
-    else:
-        st.caption("No T-Bill ISINs maturing in the next 30 days.")
-
-with mat_col2:
-    render_maturity_card("Bonds/FRTBs", bonds_anchor, bonds_maturing_crore, bonds_maturing_count, "#ef4444", "#dc2626")
-    if not bonds_maturing.empty:
-        st.dataframe(bonds_maturing.drop(columns=["Data_Date"], errors="ignore"), use_container_width=True, hide_index=True)
-    else:
-        st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
-
-st.markdown("<hr style='margin: 20px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
-
-
-# --- COMPACT COLORFUL SUMMARY CARDS (by Securities Type, using latest date in each range) ---
+# --- MARKET SUMMARY (shown first) ---
 def compute_summary(df):
     if df.empty or "Data_Date" not in df.columns:
         return pd.DataFrame(columns=["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"])
@@ -245,53 +226,83 @@ def compute_summary(df):
     return summary
 
 
-CARD_COLORS = [
-    ("#6366f1", "#4f46e5"), ("#06b6d4", "#0891b2"), ("#10b981", "#059669"),
-    ("#f59e0b", "#d97706"), ("#ec4899", "#db2777"), ("#8b5cf6", "#7c3aed"),
-]
+# One consistent color family per side (all shades of the same hue) so the
+# two sections read as clearly distinct, instead of cards from each side
+# clashing against each other. Cards use a fixed width and wrap via flexbox
+# instead of stretching to fill st.columns - a lone card no longer blows up
+# to the full row width the way it did with equal-width columns.
+BILLS_SHADES = ["#2563eb", "#1d4ed8", "#1e3a8a"]   # blues
+BONDS_SHADES = ["#0d9488", "#0f766e", "#134e4a"]   # teals
 
 
-def render_compact_summary(summary_df, empty_message, latest_label):
+def render_summary_cards(summary_df, empty_message, latest_label, shades):
     if summary_df.empty:
         st.info(empty_message)
         return
     st.caption(f"As of {latest_label}")
-    cols = st.columns(min(len(summary_df), 6))
+
+    cards_html = "<div style='display:flex; flex-wrap:wrap; gap:14px;'>"
     for i, (_, row) in enumerate(summary_df.iterrows()):
-        c1, c2 = CARD_COLORS[i % len(CARD_COLORS)]
-        with cols[i % len(cols)]:
-            st.markdown(f"""
-                <div style="
-                    background: linear-gradient(135deg, {c1} 0%, {c2} 100%);
-                    border-radius: 8px;
-                    padding: 8px 10px;
-                    color: white;
-                    margin-bottom: 8px;
-                    box-shadow: 0 2px 5px rgba(0,0,0,0.10);
-                ">
-                    <div style="font-size:0.7rem; text-transform:uppercase; opacity:0.9; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-                        {row['Category']}
-                    </div>
-                    <div style="font-size:1.1rem; font-weight:700; line-height:1.3;">
-                        {row['Count']} <span style="font-size:0.7rem; font-weight:400;">instr.</span>
-                    </div>
-                    <div style="font-size:0.72rem; opacity:0.95;">
-                        ৳{row['Total Outstanding (BDT Crore)']:,.1f}Cr · {row['Avg Market Yield (%)']:.2f}%
-                    </div>
+        color = shades[i % len(shades)]
+        cards_html += f"""
+            <div style="
+                flex: 0 1 250px;
+                background: {color};
+                border-radius: 10px;
+                padding: 18px 20px;
+                color: white;
+                box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+            ">
+                <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.04em; opacity:0.92;">
+                    {row['Category']}
                 </div>
-            """, unsafe_allow_html=True)
+                <div style="font-size:2.1rem; font-weight:800; line-height:1.25; margin-top:6px;">
+                    {row['Count']} <span style="font-size:1rem; font-weight:400;">instr.</span>
+                </div>
+                <div style="font-size:1.05rem; opacity:0.95; margin-top:6px;">
+                    ৳{row['Total Outstanding (BDT Crore)']:,.1f}Cr &nbsp;·&nbsp; {row['Avg Market Yield (%)']:.2f}%
+                </div>
+            </div>
+        """
+    cards_html += "</div>"
+    st.markdown(cards_html, unsafe_allow_html=True)
 
 
 st.markdown("#### 📊 Market Summary")
 sum_col1, sum_col2 = st.columns(2)
 with sum_col1:
     st.markdown("##### 📉 Treasury Bills")
-    render_compact_summary(compute_summary(df_bills), "No T-Bill data in this range.", bills_anchor)
+    render_summary_cards(compute_summary(df_bills), "No T-Bill data in this range.", bills_anchor, BILLS_SHADES)
 with sum_col2:
     st.markdown("##### 📈 Bonds & FRTBs")
-    render_compact_summary(compute_summary(df_securities), "No Bond/FRTB data in this range.", bonds_anchor)
+    render_summary_cards(compute_summary(df_securities), "No Bond/FRTB data in this range.", bonds_anchor, BONDS_SHADES)
 
-st.markdown("<hr style='margin: 20px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
+st.markdown("<hr style='margin: 24px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
+
+# --- MATURITY SNAPSHOT (shown second, uses the same color families as its side) ---
+st.markdown("#### ⏰ Maturity Snapshot (next 30 days)")
+mat_col1, mat_col2 = st.columns(2)
+with mat_col1:
+    render_maturity_card("T-Bills", bills_anchor, bills_maturing_crore, bills_maturing_count, BILLS_SHADES[0], BILLS_SHADES[2])
+    if not bills_maturing.empty:
+        st.dataframe(
+            bills_maturing.drop(columns=["Data_Date"], errors="ignore"),
+            use_container_width=True, hide_index=True, height=200,
+        )
+    else:
+        st.caption("No T-Bill ISINs maturing in the next 30 days.")
+
+with mat_col2:
+    render_maturity_card("Bonds/FRTBs", bonds_anchor, bonds_maturing_crore, bonds_maturing_count, BONDS_SHADES[0], BONDS_SHADES[2])
+    if not bonds_maturing.empty:
+        st.dataframe(
+            bonds_maturing.drop(columns=["Data_Date"], errors="ignore"),
+            use_container_width=True, hide_index=True, height=200,
+        )
+    else:
+        st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
+
+st.markdown("<hr style='margin: 24px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
 
 # --- DETAIL TABS WITH EXCEL EXPORT FOR THE SELECTED RANGE ---
 tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
