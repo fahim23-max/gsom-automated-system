@@ -57,8 +57,21 @@ st.markdown("""
         color: #0f172a;
     }
     
-    .bill-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
-    .bond-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
+    /* Centered Table Headers */
+    .bill-header { 
+        color: #dc2626; 
+        font-weight: bold; 
+        font-size: 1.15rem; 
+        margin-bottom: 4px; 
+        text-align: center; 
+    }
+    .bond-header { 
+        color: #dc2626; 
+        font-weight: bold; 
+        font-size: 1.15rem; 
+        margin-bottom: 4px; 
+        text-align: center; 
+    }
 
     /* Centered Streamlit Metric Cards */
     [data-testid="stMetric"] {
@@ -423,7 +436,6 @@ with tab1:
     range_label = f"{bill_start} to {bill_end}" if bill_start and bill_end else "N/A"
     st.subheader(f"Treasury Bills — {range_label}")
     if not df_bills.empty:
-        # Drop raw id from detail tab as well
         display_bills = df_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_bills.columns], errors="ignore")
         st.dataframe(display_bills, use_container_width=True)
         st.download_button(
@@ -439,7 +451,6 @@ with tab2:
     range_label = f"{bond_start} to {bond_end}" if bond_start and bond_end else "N/A"
     st.subheader(f"Bonds & FRTBs — {range_label}")
     if not df_securities.empty:
-        # Drop raw id from detail tab as well
         display_sec = df_securities.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_securities.columns], errors="ignore")
         st.dataframe(display_sec, use_container_width=True)
         st.download_button(
