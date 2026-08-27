@@ -308,9 +308,9 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- MONTHLY METRICS CALCULATION (NEW, REISSUED & ALREADY SETTLED) ---
+    # --- MONTHLY METRICS CALCULATION (INCLUDING YIELD) ---
     def calculate_monthly_metrics(df):
-        cols = ["Newly Issued", "Reissued", "Settled"]
+        cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
             return pd.DataFrame(columns=cols)
             
@@ -318,6 +318,10 @@ try:
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
+        
+        temp_df["Yield_Val"] = pd.to_numeric(
+            temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
+        ).fillna(0)
         
         temp_df["Data_Dt"] = pd.to_datetime(temp_df["Data_Date"], errors="coerce")
         
@@ -329,26 +333,36 @@ try:
         
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
         
-        first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first")
-        newly_issued = first_records.dropna(subset=["Issue_Dt"]).groupby(
-            first_records["Issue_Dt"].dt.to_period("M")
-        )["Amt_Cr"].sum().rename("Newly Issued")
+        # 1. Newly Issued
+        first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first").copy()
+        first_records = first_records.dropna(subset=["Issue_Dt"])
+        first_records["Month"] = first_records["Issue_Dt"].dt.to_period("M")
         
+        newly_issued = first_records.groupby("Month")["Amt_Cr"].sum().rename("Newly Issued")
+        newly_issued_yield_vol = (first_records["Amt_Cr"] * first_records["Yield_Val"]).groupby(first_records["Month"]).sum()
+        
+        # 2. Reissued
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
-        reissues = temp_df[temp_df["Amt_Diff"] > 0]
-        reissued = reissues.dropna(subset=["Data_Dt"]).groupby(
-            reissues["Data_Dt"].dt.to_period("M")
-        )["Amt_Diff"].sum().rename("Reissued")
+        reissues = temp_df[temp_df["Amt_Diff"] > 0].copy()
+        reissues = reissues.dropna(subset=["Data_Dt"])
+        reissues["Month"] = reissues["Data_Dt"].dt.to_period("M")
         
+        reissued = reissues.groupby("Month")["Amt_Diff"].sum().rename("Reissued")
+        reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
+        
+        # Calculate WA Yield of issuance/reissuance
+        total_vol = newly_issued.add(reissued, fill_value=0)
+        total_yield_vol = newly_issued_yield_vol.add(reissued_yield_vol, fill_value=0)
+        wa_yield = (total_yield_vol / total_vol).fillna(0).rename("WA Yield")
+        
+        # 3. Settled
         max_date = temp_df["Data_Dt"].max()
-        last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last")
-        past_maturities = last_records[last_records["Mat_Dt"] <= max_date]
+        last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
+        past_maturities = last_records[last_records["Mat_Dt"] <= max_date].dropna(subset=["Mat_Dt"])
         
-        settled = past_maturities.dropna(subset=["Mat_Dt"]).groupby(
-            past_maturities["Mat_Dt"].dt.to_period("M")
-        )["Amt_Cr"].sum().rename("Settled")
+        settled = past_maturities.groupby(past_maturities["Mat_Dt"].dt.to_period("M"))["Amt_Cr"].sum().rename("Settled")
         
-        monthly = pd.concat([newly_issued, reissued, settled], axis=1).fillna(0)
+        monthly = pd.concat([newly_issued, reissued, wa_yield, settled], axis=1).fillna(0)
         
         for c in cols:
             if c not in monthly.columns:
@@ -503,9 +517,9 @@ try:
         html += '</tr>'
         
         html += '<tr>'
-        # Level 1 Headers (Newly Issued, Reissued, Settled)
+        # Level 1 Headers (Newly Issued, Reissued, WA Yield, Settled)
         for idx, col in enumerate(df.columns):
-            border_style = "border-left: 2px solid #cbd5e1;" if idx % 3 == 0 else ""
+            border_style = "border-left: 2px solid #cbd5e1;" if idx % 4 == 0 else ""
             html += f'<th style="{border_style}">{col[1]}</th>'
         html += '</tr>'
         html += '</thead>'
@@ -515,9 +529,13 @@ try:
             html += '<tr>'
             html += f'<td>{idx}</td>'
             for col_idx, val in enumerate(row):
-                border_style = "border-left: 2px solid #cbd5e1;" if col_idx % 3 == 0 else ""
+                col_name = df.columns[col_idx][1]
+                border_style = "border-left: 2px solid #cbd5e1;" if col_idx % 4 == 0 else ""
+                
                 if val == 0:
                     html += f'<td style="color: #94a3b8; {border_style}">-</td>'
+                elif col_name == "WA Yield":
+                    html += f'<td style="{border_style}">{val:.4f}%</td>'
                 else:
                     html += f'<td style="{border_style}">{val:,.2f}</td>'
             html += '</tr>'
