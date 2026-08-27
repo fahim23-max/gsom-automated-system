@@ -46,27 +46,23 @@ try:
             color: #334155;
             font-weight: 700;
             text-align: center;
-            padding: 10px;
+            padding: 8px;
             border: 1px solid #e2e8f0;
-            font-size: 0.95rem;
+            font-size: 0.90rem;
         }
         .summary-table td {
             text-align: center;
-            padding: 12px;
+            padding: 10px;
             border: 1px solid #e2e8f0;
-            font-size: 1.15rem;
+            font-size: 1.05rem;
             font-weight: 600;
             color: #0f172a;
         }
         
         /* Centered Table Headers */
-        .bill-header, .bond-header { 
-            color: #dc2626; 
-            font-weight: bold; 
-            font-size: 1.15rem; 
-            margin-bottom: 4px; 
-            text-align: center; 
-        }
+        .bill-header { color: #dc2626; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
+        .frtb-header { color: #059669; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
+        .bond-header { color: #2563eb; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
 
         /* Upgraded Professional Financial Metric Cards */
         .custom-metric-card {
@@ -284,23 +280,19 @@ try:
         temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce") if issue_col else pd.NaT
         temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce") if mat_col else pd.NaT
         
-        # Sort chronologically to track outstanding amount changes per ISIN
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
         
-        # 1. Newly Issued: Base amount observed assigned to formal Issue Date
         first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first")
         newly_issued = first_records.dropna(subset=["Issue_Dt"]).groupby(
             first_records["Issue_Dt"].dt.to_period("M")
         )["Amt_Cr"].sum().rename("Newly Issued")
         
-        # 2. Reissued: Track day-over-day positive increases in Outstanding Amount per ISIN
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
         reissues = temp_df[temp_df["Amt_Diff"] > 0]
         reissued = reissues.dropna(subset=["Data_Dt"]).groupby(
             reissues["Data_Dt"].dt.to_period("M")
         )["Amt_Diff"].sum().rename("Reissued")
         
-        # 3. Settled: Only include maturities that have ALREADY passed (<= max loaded Data Date)
         max_date = temp_df["Data_Dt"].max()
         last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last")
         past_maturities = last_records[last_records["Mat_Dt"] <= max_date]
@@ -311,7 +303,6 @@ try:
         
         monthly = pd.concat([newly_issued, reissued, settled], axis=1).fillna(0)
         
-        # Ensure all columns exist in specific order
         for c in cols:
             if c not in monthly.columns:
                 monthly[c] = 0.0
@@ -352,60 +343,13 @@ try:
     bills_maturing, bills_maturing_crore, bills_maturing_count, bills_anchor = compute_maturity_detail(df_bills, bill_end)
     bonds_maturing, bonds_maturing_crore, bonds_maturing_count, bonds_anchor = compute_maturity_detail(df_securities, bond_end)
 
-    # --- SUMMARY COMPUTATION & RENDERERS ---
-    def render_bills_summary_table(df, target_end_date):
+    # --- UNIFIED SUMMARY BLOCK RENDERER ---
+    def render_summary_block(df, target_end_date, title, header_class, include_coupon=False):
         if df.empty or "Data_Date" not in df.columns:
-            st.info("No T-Bill data in this range.")
+            st.markdown(f'<div class="{header_class}">{title}</div>', unsafe_allow_html=True)
+            st.info(f"No {title} data in this range.")
             return
-        
-        temp_df, actual_date = get_snapshot_for_target_date(df, target_end_date)
-        count = int(temp_df["ISIN"].nunique()) if not temp_df.empty else 0
-        
-        if count > 0:
-            temp_df["Outstanding_Crore"] = pd.to_numeric(
-                temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
-            ).fillna(0) / 10.0
-            total_crore = temp_df["Outstanding_Crore"].sum()
             
-            temp_df["Yield_Val"] = pd.to_numeric(
-                temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
-            ).fillna(0)
-
-            # Strict Weighted Average Calculation (Ignores missing/zero yields)
-            valid_yields = temp_df[temp_df["Yield_Val"] > 0]
-            if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
-                weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
-            else:
-                weighted_yield = 0.0
-        else:
-            total_crore = 0.0
-            weighted_yield = 0.0
-
-        st.markdown(f"""
-            <div class="bill-header">Treasury Bills <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
-            <table class="summary-table">
-                <thead>
-                    <tr>
-                        <th>Count</th>
-                        <th>Amount (BDT Cr)</th>
-                        <th>WA Yield</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr>
-                        <td>{count}</td>
-                        <td>৳{total_crore:,.2f} Cr</td>
-                        <td>{weighted_yield:.4f}%</td>
-                    </tr>
-                </tbody>
-            </table>
-        """, unsafe_allow_html=True)
-
-    def render_bonds_summary_table(df, target_end_date):
-        if df.empty or "Data_Date" not in df.columns:
-            st.info("No Bond/FRTB data in this range.")
-            return
-        
         temp_df, actual_date = get_snapshot_for_target_date(df, target_end_date)
         count = int(temp_df["ISIN"].nunique()) if not temp_df.empty else 0
         
@@ -425,27 +369,32 @@ try:
             else:
                 weighted_yield = 0.0
 
-            coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
-            if coupon_col:
-                temp_df["Coupon_Val"] = pd.to_numeric(
-                    temp_df[coupon_col].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
-                ).fillna(0)
-                
-                valid_coupons = temp_df[temp_df["Coupon_Val"] > 0]
-                if not valid_coupons.empty and valid_coupons["Outstanding_Crore"].sum() > 0:
-                    weighted_coupon = (valid_coupons["Coupon_Val"] * valid_coupons["Outstanding_Crore"]).sum() / valid_coupons["Outstanding_Crore"].sum()
-                    coupon_str = f"{weighted_coupon:.4f}%"
+            if include_coupon:
+                coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
+                if coupon_col:
+                    temp_df["Coupon_Val"] = pd.to_numeric(
+                        temp_df[coupon_col].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
+                    ).fillna(0)
+                    
+                    valid_coupons = temp_df[temp_df["Coupon_Val"] > 0]
+                    if not valid_coupons.empty and valid_coupons["Outstanding_Crore"].sum() > 0:
+                        weighted_coupon = (valid_coupons["Coupon_Val"] * valid_coupons["Outstanding_Crore"]).sum() / valid_coupons["Outstanding_Crore"].sum()
+                        coupon_str = f"{weighted_coupon:.4f}%"
+                    else:
+                        coupon_str = "0.0000%"
                 else:
-                    coupon_str = "0.0000%"
+                    coupon_str = "N/A"
             else:
-                coupon_str = "N/A"
+                coupon_str = None
         else:
             total_crore = 0.0
             weighted_yield = 0.0
-            coupon_str = "N/A"
+            coupon_str = "N/A" if include_coupon else None
 
-        st.markdown(f"""
-            <div class="bond-header">Treasury Bonds &amp; FRTBs <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
+        header_html = f'<div class="{header_class}">{title} <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>'
+        
+        if include_coupon:
+            table_html = f"""
             <table class="summary-table">
                 <thead>
                     <tr>
@@ -464,17 +413,53 @@ try:
                     </tr>
                 </tbody>
             </table>
-        """, unsafe_allow_html=True)
+            """
+        else:
+            table_html = f"""
+            <table class="summary-table">
+                <thead>
+                    <tr>
+                        <th>Count</th>
+                        <th>Amount (BDT Cr)</th>
+                        <th>WA Yield</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>{count}</td>
+                        <td>৳{total_crore:,.2f} Cr</td>
+                        <td>{weighted_yield:.4f}%</td>
+                    </tr>
+                </tbody>
+            </table>
+            """
+            
+        st.markdown(header_html + table_html, unsafe_allow_html=True)
 
-    # --- 1. MARKET SUMMARY SECTION ---
+
+    # --- 1. MARKET SUMMARY SECTION (3-COLUMN SPLIT) ---
     st.markdown("#### 📊 Market Summary")
-    sum_col1, sum_col2 = st.columns(2)
+    
+    # Split df_securities into FRTBs and Standard Bonds based on string matching
+    if not df_securities.empty:
+        frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
+        df_frtbs = df_securities[frtb_mask]
+        df_bonds = df_securities[~frtb_mask]
+    else:
+        df_frtbs = pd.DataFrame()
+        df_bonds = pd.DataFrame()
+
+    sum_col1, sum_col2, sum_col3 = st.columns(3)
 
     with sum_col1:
-        render_bills_summary_table(df_bills, bill_end)
+        render_summary_block(df_bills, bill_end, "Treasury Bills", "bill-header", include_coupon=False)
 
     with sum_col2:
-        render_bonds_summary_table(df_securities, bond_end)
+        render_summary_block(df_frtbs, bond_end, "FRTBs", "frtb-header", include_coupon=True)
+
+    with sum_col3:
+        render_summary_block(df_bonds, bond_end, "Treasury Bonds", "bond-header", include_coupon=True)
+
 
     # --- 2. MONTHLY METRICS LEDGER (NEWLY ISSUED, REISSUED, SETTLED) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
