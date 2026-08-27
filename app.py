@@ -143,8 +143,14 @@ df_securities = load_securities_range(bond_start, bond_end)
 # --- EXCEL EXPORT HELPER ---
 def to_excel_bytes(df, sheet_name):
     buffer = io.BytesIO()
+    export_df = df.copy()
+    
+    # Strip timezones from any datetime columns to prevent Excel export errors
+    for col in export_df.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
+        export_df[col] = export_df[col].dt.tz_localize(None)
+        
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
+        export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
     return buffer.getvalue()
 
 
@@ -226,11 +232,6 @@ def compute_summary(df):
     return summary
 
 
-# One consistent color family per side (all shades of the same hue) so the
-# two sections read as clearly distinct, instead of cards from each side
-# clashing against each other. Cards use a fixed width and wrap via flexbox
-# instead of stretching to fill st.columns - a lone card no longer blows up
-# to the full row width the way it did with equal-width columns.
 BILLS_SHADES = ["#2563eb", "#1d4ed8", "#1e3a8a"]   # blues
 BONDS_SHADES = ["#0d9488", "#0f766e", "#134e4a"]   # teals
 
