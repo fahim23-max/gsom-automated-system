@@ -112,6 +112,10 @@ st.markdown("""
 
 # Database Connection
 DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    st.error("DATABASE_URL secret is not configured. Please set it in your environment or Streamlit Secrets.")
+    st.stop()
+
 engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
 # --- TITLE ---
@@ -131,7 +135,6 @@ def get_bill_date_bounds():
         df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_bills', engine)
         return df.iloc[0, 0], df.iloc[0, 1]
     except Exception as e:
-        st.error(f"Error fetching T-Bill date range: {e}")
         return None, None
 
 @st.cache_data(ttl=30)
@@ -140,7 +143,6 @@ def get_security_date_bounds():
         df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_securities', engine)
         return df.iloc[0, 0], df.iloc[0, 1]
     except Exception as e:
-        st.error(f"Error fetching Bond/FRTB date range: {e}")
         return None, None
 
 bill_min, bill_max = get_bill_date_bounds()
@@ -203,15 +205,23 @@ bond_start, bond_end = unpack_range(bond_range)
 def load_bills_range(start_d, end_d):
     if not start_d or not end_d:
         return pd.DataFrame()
-    q = text('SELECT * FROM public.daily_bills WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
-    return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
+    try:
+        q = text('SELECT * FROM public.daily_bills WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
+    except Exception as e:
+        st.error(f"Error loading T-Bills: {e}")
+        return pd.DataFrame()
 
 @st.cache_data(ttl=30)
 def load_securities_range(start_d, end_d):
     if not start_d or not end_d:
         return pd.DataFrame()
-    q = text('SELECT * FROM public.daily_securities WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
-    return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
+    try:
+        q = text('SELECT * FROM public.daily_securities WHERE "Data_Date" BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
+        return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
+    except Exception as e:
+        st.error(f"Error loading Bonds/FRTBs: {e}")
+        return pd.DataFrame()
 
 df_bills = load_bills_range(bill_start, bill_end)
 df_securities = load_securities_range(bond_start, bond_end)
@@ -392,7 +402,7 @@ with sum_col2:
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-# --- HISTORICAL YIELD CURVE SECTION (MULTI-SERIES FIXED) ---
+# --- HISTORICAL YIELD CURVE SECTION (WITH SAFE NUMERIC PARSING) ---
 st.markdown("#### 📈 Historical Yield Curve Term Structure")
 yc_col1, yc_col2 = st.columns(2)
 
@@ -418,28 +428,50 @@ def render_historical_yield_curve(df, target_end_date, title):
         st.warning("Please select at least one date to display the yield curve.")
         return
 
-    sub_df = df[df["Data_Date"].astype(str).isin(selected_curve_dates)].copy()
-    sub_df["Market Yield (%)"] = pd.to_numeric(
-        sub_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
-    )
-    sub_df["Remaining Maturity (Yrs)"] = pd.to_numeric(
-        sub_df["Remaining Maturity"].astype(str), errors="coerce"
-    )
-    sub_df = sub_df.dropna(subset=["Remaining Maturity (Yrs)", "Market Yield (%)"])
+    try:
+        sub_df = df[df["Data_Date"].astype(str).isin(selected_curve_dates)].copy()
+        
+        # Clean Market Yield
+        sub_df["Market Yield (%)"] = pd.to_numeric(
+            sub_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+        )
+        
+        # Safe Cleaning for Remaining Maturity (handles text like '182D', '365D', '1.5Y')
+        def parse_maturity(val):
+            if pd.isna(val):
+                return None
+            s = str(val).strip().upper()
+            try:
+                # Direct float conversion if already numeric
+                return float(s)
+            except ValueError:
+                # Handle Days suffix 'D'
+                if 'D' in s:
+                    num_part = ''.join([c for c in s if c.isdigit() or c == '.'])
+                    return float(num_part) / 365.0 if num_part else None
+                # Handle Years suffix 'Y'
+                elif 'Y' in s:
+                    num_part = ''.join([c for c in s if c.isdigit() or c == '.'])
+                    return float(num_part) if num_part else None
+                return None
 
-    if sub_df.empty:
-        st.info(f"Insufficient numeric maturity data across selected dates for {title}.")
-        return
+        sub_df["Remaining Maturity (Yrs)"] = sub_df["Remaining Maturity"].apply(parse_maturity)
+        sub_df = sub_df.dropna(subset=["Remaining Maturity (Yrs)", "Market Yield (%)"])
 
-    # Aggregate by Maturity and Date to prevent collision, then pivot cleanly
-    agg_df = sub_df.groupby(["Remaining Maturity (Yrs)", "Data_Date"], as_index=False)["Market Yield (%)"].mean()
-    pivot_chart = agg_df.pivot(
-        index="Remaining Maturity (Yrs)", 
-        columns="Data_Date", 
-        values="Market Yield (%)"
-    ).sort_index()
+        if sub_df.empty:
+            st.info(f"Insufficient numeric maturity data across selected dates for {title}.")
+            return
 
-    st.line_chart(pivot_chart, use_container_width=True)
+        agg_df = sub_df.groupby(["Remaining Maturity (Yrs)", "Data_Date"], as_index=False)["Market Yield (%)"].mean()
+        pivot_chart = agg_df.pivot(
+            index="Remaining Maturity (Yrs)", 
+            columns="Data_Date", 
+            values="Market Yield (%)"
+        ).sort_index()
+
+        st.line_chart(pivot_chart, use_container_width=True)
+    except Exception as ex:
+        st.error(f"Error rendering chart for {title}: {ex}")
 
 with yc_col1:
     render_historical_yield_curve(df_bills, bill_end, "Treasury Bills")
