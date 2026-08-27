@@ -13,7 +13,6 @@ st.set_page_config(
 # Inject Custom CSS for Table Styling (Center-align & Fit Content)
 st.markdown("""
     <style>
-    /* Force tables and dataframes to fit content and center align text */
     table {
         width: auto !important;
         margin-left: auto !important;
@@ -69,12 +68,7 @@ def load_data_for_date(date_str):
 
 df_bills, df_securities = load_data_for_date(selected_date)
 
-# Calculate Summary Metrics
-total_bills = len(df_bills)
-total_securities = len(df_securities)
-total_active = total_bills + total_securities
-
-# --- SUMMARY BOX PLACED JUST BELOW THE DATE SELECTOR ---
+# --- SUMMARY BOX & TABLE PROCESSING ---
 st.markdown(f"""
     <div style="
         background-color: #f8f9fa; 
@@ -97,35 +91,66 @@ st.markdown(f"""
         ">
             📊 Market Summary & Overview ({selected_date})
         </h4>
-        <div style="display: flex; justify-content: space-around; text-align: center;">
-            <div>
-                <span style="font-size: 0.85rem; color: #6b7280; display: block;">Total T-Bill Issues</span>
-                <span style="font-size: 1.4rem; font-weight: bold; color: #111827;">{total_bills}</span>
-            </div>
-            <div>
-                <span style="font-size: 0.85rem; color: #6b7280; display: block;">Total Bond & FRTB Issues</span>
-                <span style="font-size: 1.4rem; font-weight: bold; color: #111827;">{total_securities}</span>
-            </div>
-            <div>
-                <span style="font-size: 0.85rem; color: #6b7280; display: block;">Total Active Instruments</span>
-                <span style="font-size: 1.4rem; font-weight: bold; color: #111827;">{total_active}</span>
-            </div>
-        </div>
-    </div>
 """, unsafe_allow_html=True)
+
+# Helper function to clean numeric strings and build summary aggregates
+def compute_summary(df, type_col):
+    if df.empty:
+        return pd.DataFrame(columns=["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"])
+    
+    # Clean numeric columns for calculation
+    temp_df = df.copy()
+    temp_df["Outstanding_Crore"] = pd.to_numeric(
+        temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+    ).fillna(0) / 10.0
+
+    temp_df["Yield_Val"] = pd.to_numeric(
+        temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+    ).fillna(0)
+
+    summary = temp_df.groupby(type_col).agg(
+        Count=("ISIN", "count"),
+        Outstanding_Crore=("Outstanding_Crore", "sum"),
+        Avg_Yield=("Yield_Val", "mean")
+    ).reset_index()
+
+    summary.columns = ["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"]
+    summary["Total Outstanding (BDT Crore)"] = summary["Total Outstanding (BDT Crore)"].round(2)
+    summary["Avg Market Yield (%)"] = summary["Avg Market Yield (%)"].round(2)
+    return summary
+
+col_sum1, col_sum2 = st.columns(2)
+
+with col_sum1:
+    st.markdown("##### 📉 Treasury Bills Summary")
+    if not df_bills.empty:
+        bills_summary = compute_summary(df_bills, "Securities Type")
+        st.dataframe(bills_summary, use_container_width=True, hide_index=True)
+    else:
+        st.info("No T-Bill data available.")
+
+with col_sum2:
+    st.markdown("##### 📈 Bonds & FRTBs Summary")
+    if not df_securities.empty:
+        securities_summary = compute_summary(df_securities, "Securities Type")
+        st.dataframe(securities_summary, use_container_width=True, hide_index=True)
+    else:
+        st.info("No Bond/FRTB data available.")
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # Tabs for detailed tables
 tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
 
 with tab1:
-    st.subheader(f"Treasury Bills ({selected_date})")
+    st.subheader(f"Treasury Bills Details ({selected_date})")
     if not df_bills.empty:
         st.dataframe(df_bills, use_container_width=True)
     else:
         st.info("No T-Bill records available for this date.")
 
 with tab2:
-    st.subheader(f"Bonds & FRTBs ({selected_date})")
+    st.subheader(f"Bonds & FRTBs Details ({selected_date})")
     if not df_securities.empty:
         st.dataframe(df_securities, use_container_width=True)
     else:
