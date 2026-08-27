@@ -267,7 +267,18 @@ try:
     df_bills = load_bills_range(bill_start, bill_end)
     df_securities = load_securities_range(bond_start, bond_end)
 
-    # Split df_securities into FRTBs and Standard Bonds globally
+    # --- LOAD FULL UNFILTERED DATA FOR THE LEDGER (CACHED) ---
+    @st.cache_data(ttl=300)
+    def load_full_ledger_data():
+        q_bills = text('SELECT * FROM public.daily_bills')
+        q_secs = text('SELECT * FROM public.daily_securities')
+        df_b = pd.read_sql(q_bills, engine)
+        df_s = pd.read_sql(q_secs, engine)
+        return df_b, df_s
+
+    df_bills_full, df_securities_full = load_full_ledger_data()
+
+    # Split securities into FRTBs and Standard Bonds globally
     if not df_securities.empty:
         frtb_mask = df_securities.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
         df_frtbs = df_securities[frtb_mask]
@@ -276,15 +287,21 @@ try:
         df_frtbs = pd.DataFrame()
         df_bonds = pd.DataFrame()
 
-    # --- EXCEL EXPORT HELPER (ROBUST TIMEZONE STRIPPING) ---
+    if not df_securities_full.empty:
+        frtb_mask_full = df_securities_full.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
+        df_frtbs_full = df_securities_full[frtb_mask_full]
+        df_bonds_full = df_securities_full[~frtb_mask_full]
+    else:
+        df_frtbs_full = pd.DataFrame()
+        df_bonds_full = pd.DataFrame()
+
+    # --- EXCEL EXPORT HELPER ---
     def to_excel_bytes(df, sheet_name):
         buffer = io.BytesIO()
         export_df = df.copy()
-        
         for col in export_df.columns:
             if isinstance(export_df[col].dtype, pd.DatetimeTZDtype):
                 export_df[col] = export_df[col].dt.tz_localize(None)
-                
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
         return buffer.getvalue()
@@ -308,15 +325,16 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- MONTHLY METRICS CALCULATION (NEW, REISSUED & ALREADY SETTLED) ---
-    def calculate_monthly_metrics(df):
+    # --- OPTIMIZED CACHED MONTHLY METRICS CALCULATION ---
+    @st.cache_data(ttl=300)
+    def calculate_monthly_metrics(df_serialized_json):
+        # Accepts serialized dataframe to allow Streamlit hash-caching
+        df = pd.read_json(df_serialized_json) if isinstance(df_serialized_json, str) else df_serialized_json
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
             return pd.DataFrame(columns=cols)
             
         temp_df = df.copy()
-        
-        # 1. Clean and convert numeric/date columns
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
@@ -333,15 +351,10 @@ try:
         temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce").dt.normalize() if issue_col else pd.NaT
         temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce").dt.normalize() if mat_col else pd.NaT
         
-        # Determine strict bounds based on the data queried
-        min_data_month = temp_df["Data_Dt"].min().to_period("M")
-        max_data_month = temp_df["Data_Dt"].max().to_period("M")
         max_date = temp_df["Data_Dt"].max()
-        
-        # Sort chronologically to correctly track outstanding amount changes
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
         
-        # --- A. NEWLY ISSUED ---
+        # 1. Newly Issued
         first_records = temp_df[temp_df["Amt_Cr"] > 0].drop_duplicates(subset=["ISIN"], keep="first").copy()
         first_records = first_records.dropna(subset=["Issue_Dt"])
         first_records["Month"] = first_records["Issue_Dt"].dt.to_period("M")
@@ -349,7 +362,7 @@ try:
         newly_issued = first_records.groupby("Month")["Amt_Cr"].sum().rename("Newly Issued")
         newly_issued_yield_vol = (first_records["Amt_Cr"] * first_records["Yield_Val"]).groupby(first_records["Month"]).sum()
         
-        # --- B. REISSUED ---
+        # 2. Reissued
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
         reissues = temp_df[temp_df["Amt_Diff"] > 0].copy()
         reissues = reissues.dropna(subset=["Data_Dt"])
@@ -358,12 +371,12 @@ try:
         reissued = reissues.groupby("Month")["Amt_Diff"].sum().rename("Reissued")
         reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
         
-        # --- C. WA YIELD ---
+        # 3. WA Yield
         total_vol = newly_issued.add(reissued, fill_value=0)
         total_yield_vol = newly_issued_yield_vol.add(reissued_yield_vol, fill_value=0)
         wa_yield = (total_yield_vol / total_vol).fillna(0).rename("WA Yield")
         
-        # --- D. SETTLED ---
+        # 4. Settled
         max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
         last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
         last_records = last_records.merge(max_amt_per_isin, on="ISIN")
@@ -373,16 +386,11 @@ try:
         
         settled = past_maturities.groupby("Month")["Max_Amt"].sum().rename("Settled")
         
-        # --- E. COMBINE & TRUNCATE ---
         monthly = pd.concat([newly_issued, reissued, wa_yield, settled], axis=1).fillna(0)
-        
-        if not monthly.empty:
-            monthly = monthly[(monthly.index >= min_data_month) & (monthly.index <= max_data_month)]
         
         for c in cols:
             if c not in monthly.columns:
                 monthly[c] = 0.0
-                
         return monthly[cols]
 
     # --- MATURITY DETAILS ---
@@ -524,7 +532,6 @@ try:
         html += '<tr>'
         html += '<th rowspan="2" style="vertical-align: middle; width: 10%;">Month Year</th>'
         
-        # Level 0 Headers (Treasury Bills, FRTBs, Treasury Bonds)
         level0_cols = df.columns.get_level_values(0).unique()
         for col in level0_cols:
             colspan = sum(1 for c in df.columns if c[0] == col)
@@ -533,7 +540,6 @@ try:
         html += '</tr>'
         
         html += '<tr>'
-        # Level 1 Headers (Newly Issued, Reissued, WA Yield, Settled)
         for idx, col in enumerate(df.columns):
             border_style = "border-left: 2px solid #cbd5e1;" if idx % 4 == 0 else ""
             html += f'<th style="{border_style}">{col[1]}</th>'
@@ -574,13 +580,13 @@ try:
         render_summary_block(df_bonds, bond_end, "Treasury Bonds", "bond-header", include_coupon=True)
 
 
-    # --- 2. MONTHLY METRICS LEDGER (HTML FORMATTED) ---
+    # --- 2. MONTHLY METRICS LEDGER (CACHED & LIGHTNING FAST) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
     st.markdown("#### 📅 Monthly Issuance & Settlement Ledger (BDT Cr)")
     
-    bills_monthly = calculate_monthly_metrics(df_bills)
-    frtbs_monthly = calculate_monthly_metrics(df_frtbs)
-    bonds_monthly = calculate_monthly_metrics(df_bonds)
+    bills_monthly = calculate_monthly_metrics(df_bills_full.to_json())
+    frtbs_monthly = calculate_monthly_metrics(df_frtbs_full.to_json())
+    bonds_monthly = calculate_monthly_metrics(df_bonds_full.to_json())
 
     dfs_to_join = []
     if not bills_monthly.empty:
@@ -601,7 +607,6 @@ try:
         combined_monthly = combined_monthly.fillna(0)
         combined_monthly.sort_index(ascending=False, inplace=True)
         
-        # Format index as Month-Year (e.g. Aug-26)
         combined_monthly.index = combined_monthly.index.strftime("%b-%y")
         
         render_monthly_ledger_html(combined_monthly)
