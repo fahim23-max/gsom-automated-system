@@ -3,19 +3,22 @@ import io
 from datetime import timedelta
 
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from sqlalchemy import create_engine, text
 
 # Page Configuration
 st.set_page_config(
-    page_title="GSOM Dashboard",
+    page_title="GSOM Treasury Dashboard",
     page_icon="📈",
     layout="wide"
 )
 
+# Page styling: Soft slate background and table alignments
 st.markdown("""
     <style>
+    .stApp {
+        background-color: #f8fafc !important;
+    }
     table {
         width: auto !important;
         margin-left: auto !important;
@@ -40,7 +43,7 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# --- AVAILABLE DATE BOUNDS (used to set sensible date_input min/max/default) ---
+# --- AVAILABLE DATE BOUNDS ---
 @st.cache_data(ttl=30)
 def get_bill_date_bounds():
     try:
@@ -72,7 +75,6 @@ def to_date(s):
 
 
 def default_range(min_s, max_s, lookback_days=30):
-    """Default to the last `lookback_days` within the available bounds."""
     mn, mx = to_date(min_s), to_date(max_s)
     if mn is None or mx is None:
         return None, None
@@ -80,7 +82,7 @@ def default_range(min_s, max_s, lookback_days=30):
     return start, mx
 
 
-# --- DATE RANGE PICKERS (independent for Bills and Bonds/FRTBs) ---
+# --- DATE RANGE PICKERS ---
 st.markdown("#### 🔎 Select Date Range")
 range_col1, range_col2 = st.columns(2)
 
@@ -112,8 +114,6 @@ with range_col2:
 
 
 def unpack_range(rng):
-    """st.date_input returns a single date while the user is mid-pick; only
-    treat it as a valid range once both endpoints are chosen."""
     if isinstance(rng, tuple) and len(rng) == 2:
         return rng[0], rng[1]
     return None, None
@@ -141,12 +141,10 @@ df_bills = load_bills_range(bill_start, bill_end)
 df_securities = load_securities_range(bond_start, bond_end)
 
 
-# --- EXCEL EXPORT HELPER (Fixed for Timezone stripping) ---
+# --- EXCEL EXPORT HELPER ---
 def to_excel_bytes(df, sheet_name):
     buffer = io.BytesIO()
     export_df = df.copy()
-    
-    # Strip timezones from any datetime columns to prevent Excel export errors
     for col in export_df.select_dtypes(include=['datetime64[ns, UTC]', 'datetimetz']).columns:
         export_df[col] = export_df[col].dt.tz_localize(None)
         
@@ -155,10 +153,8 @@ def to_excel_bytes(df, sheet_name):
     return buffer.getvalue()
 
 
-# --- MATURITY: SEPARATE PER CATEGORY, ANCHORED TO THE LATEST DATE IN EACH RANGE ---
+# --- MATURITY SNAPSHOT ---
 def compute_maturity_detail(df, days=30):
-    """Uses the most recent date present in the loaded range as the snapshot,
-    dedupes by ISIN, and returns (detail_df, total_crore, count)."""
     if df.empty or "Maturity/ Expiry Date" not in df.columns or "Data_Date" not in df.columns:
         return pd.DataFrame(), 0.0, 0
 
@@ -188,34 +184,32 @@ bonds_anchor = df_securities["Data_Date"].max() if not df_securities.empty else 
 
 
 def render_maturity_card(title, anchor_label, crore, count, color_start, color_end):
-    card_html = f"""
-    <div style="
-        background: linear-gradient(135deg, {color_start} 0%, {color_end} 100%);
-        border-radius: 10px;
-        padding: 14px 18px;
-        color: white;
-        font-family: sans-serif;
-        box-shadow: 0 3px 10px rgba(0,0,0,0.12);
-    ">
-        <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
-            ⏰ {title} — Maturing in 30 Days (from {anchor_label})
+    st.markdown(f"""
+        <div style="
+            background: linear-gradient(135deg, {color_start} 0%, {color_end} 100%);
+            border-radius: 10px;
+            padding: 14px 18px;
+            color: white;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.12);
+        ">
+            <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.05em; opacity:0.92;">
+                ⏰ {title} — Maturing in 30 Days (from {anchor_label})
+            </div>
+            <div style="font-size:2.0rem; font-weight:800; margin-top:4px;">
+                ৳ {crore:,.2f} Cr &nbsp;
+                <span style="font-size:1.1rem; font-weight:400; opacity:0.92;">({count} ISINs)</span>
+            </div>
         </div>
-        <div style="font-size:2.0rem; font-weight:800; margin-top:4px;">
-            ৳ {crore:,.2f} Cr &nbsp;
-            <span style="font-size:1.1rem; font-weight:400; opacity:0.92;">({count} ISINs)</span>
-        </div>
-    </div>
-    """
-    components.html(card_html, height=95, scrolling=False)
+    """, unsafe_allow_html=True)
 
 
-# --- MARKET SUMMARY (shown first) ---
+# --- MARKET SUMMARY (WEIGHTED AVERAGE LOGIC) ---
 def compute_summary(df):
     if df.empty or "Data_Date" not in df.columns:
         return pd.DataFrame(columns=["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"])
 
     latest_date = df["Data_Date"].max()
-    temp_df = df[df["Data_Date"] == latest_date].copy()
+    temp_df = df[df["Data_Date"] == latest_date].drop_duplicates(subset="ISIN").copy()
 
     temp_df["Outstanding_Crore"] = pd.to_numeric(
         temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
@@ -224,15 +218,24 @@ def compute_summary(df):
         temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
     ).fillna(0)
 
-    summary = temp_df.groupby("Securities Type").agg(
-        Count=("ISIN", "count"),
-        Outstanding_Crore=("Outstanding_Crore", "sum"),
-        Avg_Yield=("Yield_Val", "mean")
-    ).reset_index()
-    summary.columns = ["Category", "Count", "Total Outstanding (BDT Crore)", "Avg Market Yield (%)"]
-    summary["Total Outstanding (BDT Crore)"] = summary["Total Outstanding (BDT Crore)"].round(2)
-    summary["Avg Market Yield (%)"] = summary["Avg Market Yield (%)"].round(2)
-    return summary
+    # Calculate Weighted Average Yield per Securities Type category
+    rows = []
+    for category, group in temp_df.groupby("Securities Type"):
+        count = group["ISIN"].count()
+        total_crore = group["Outstanding_Crore"].sum()
+        if total_crore > 0:
+            weighted_yield = (group["Yield_Val"] * group["Outstanding_Crore"]).sum() / total_crore
+        else:
+            weighted_yield = 0.0
+
+        rows.append({
+            "Category": category,
+            "Count": count,
+            "Total Outstanding (BDT Crore)": round(total_crore, 2),
+            "Avg Market Yield (%)": round(weighted_yield, 2)
+        })
+
+    return pd.DataFrame(rows)
 
 
 BILLS_SHADES = ["#2563eb", "#1d4ed8", "#1e3a8a"]   # blues
@@ -245,32 +248,29 @@ def render_summary_cards(summary_df, empty_message, latest_label, shades):
         return
     st.caption(f"As of {latest_label}")
 
-    cards_html = "<div style='display:flex; flex-wrap:wrap; gap:14px; font-family:sans-serif;'>"
+    cols = st.columns(len(summary_df))
     for i, (_, row) in enumerate(summary_df.iterrows()):
         color = shades[i % len(shades)]
-        cards_html += f"""
-            <div style="
-                flex: 0 1 250px;
-                background: {color};
-                border-radius: 10px;
-                padding: 18px 20px;
-                color: white;
-                box-shadow: 0 3px 10px rgba(0,0,0,0.15);
-            ">
-                <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.04em; opacity:0.92;">
-                    {row['Category']}
+        with cols[i]:
+            st.markdown(f"""
+                <div style="
+                    background: {color};
+                    border-radius: 10px;
+                    padding: 18px 20px;
+                    color: white;
+                    box-shadow: 0 3px 10px rgba(0,0,0,0.15);
+                ">
+                    <div style="font-size:0.9rem; text-transform:uppercase; letter-spacing:0.04em; opacity:0.92;">
+                        {row['Category']}
+                    </div>
+                    <div style="font-size:2.1rem; font-weight:800; line-height:1.25; margin-top:6px;">
+                        {row['Count']} <span style="font-size:1rem; font-weight:400;">instr.</span>
+                    </div>
+                    <div style="font-size:1.05rem; opacity:0.95; margin-top:6px;">
+                        ৳{row['Total Outstanding (BDT Crore)']:,.1f}Cr &nbsp;·&nbsp; {row['Avg Market Yield (%)']:.2f}%
+                    </div>
                 </div>
-                <div style="font-size:2.1rem; font-weight:800; line-height:1.25; margin-top:6px;">
-                    {row['Count']} <span style="font-size:1rem; font-weight:400;">instr.</span>
-                </div>
-                <div style="font-size:1.05rem; opacity:0.95; margin-top:6px;">
-                    ৳{row['Total Outstanding (BDT Crore)']:,.1f}Cr &nbsp;·&nbsp; {row['Avg Market Yield (%)']:.2f}%
-                </div>
-            </div>
-        """
-    cards_html += "</div>"
-    
-    components.html(cards_html, height=130, scrolling=False)
+            """, unsafe_allow_html=True)
 
 
 st.markdown("#### 📊 Market Summary")
@@ -284,7 +284,7 @@ with sum_col2:
 
 st.markdown("<hr style='margin: 24px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
 
-# --- MATURITY SNAPSHOT (shown second, uses the same color families as its side) ---
+# --- MATURITY SNAPSHOT ---
 st.markdown("#### ⏰ Maturity Snapshot (next 30 days)")
 mat_col1, mat_col2 = st.columns(2)
 with mat_col1:
@@ -309,7 +309,7 @@ with mat_col2:
 
 st.markdown("<hr style='margin: 24px 0; border: 0; border-top: 1px solid #e0e0e0;'>", unsafe_allow_html=True)
 
-# --- DETAIL TABS WITH EXCEL EXPORT FOR THE SELECTED RANGE ---
+# --- DETAIL TABS WITH EXCEL EXPORT ---
 tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
 
 with tab1:
