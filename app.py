@@ -238,7 +238,6 @@ try:
         buffer = io.BytesIO()
         export_df = df.copy()
         
-        # Safely remove timezones for Excel compatibility without triggering deprecation warnings
         for col in export_df.columns:
             if isinstance(export_df[col].dtype, pd.DatetimeTZDtype):
                 export_df[col] = export_df[col].dt.tz_localize(None)
@@ -265,6 +264,55 @@ try:
             
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
+
+    # --- MONTHLY METRICS CALCULATION (NEW & REISSUED LOGIC) ---
+    def calculate_monthly_metrics(df):
+        cols = ["Newly Issued", "Reissued", "Settled"]
+        if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
+            return pd.DataFrame(columns=cols)
+            
+        temp_df = df.copy()
+        temp_df["Amt_Cr"] = pd.to_numeric(
+            temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+        ).fillna(0) / 10.0
+        
+        temp_df["Data_Dt"] = pd.to_datetime(temp_df["Data_Date"], errors="coerce")
+        
+        issue_col = "Issue Date" if "Issue Date" in temp_df.columns else None
+        mat_col = "Maturity/ Expiry Date" if "Maturity/ Expiry Date" in temp_df.columns else None
+        
+        temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce") if issue_col else pd.NaT
+        temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce") if mat_col else pd.NaT
+        
+        # Sort chronologically to track outstanding amount changes per ISIN
+        temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
+        
+        # 1. Newly Issued: Attributed to the formal Issue Date using the first observed amount
+        first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first")
+        newly_issued = first_records.dropna(subset=["Issue_Dt"]).groupby(
+            first_records["Issue_Dt"].dt.to_period("M")
+        )["Amt_Cr"].sum().rename("Newly Issued")
+        
+        # 2. Reissued: Track daily increases in Outstanding Amount per ISIN
+        temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
+        reissues = temp_df[temp_df["Amt_Diff"] > 0]
+        reissued = reissues.dropna(subset=["Data_Dt"]).groupby(
+            reissues["Data_Dt"].dt.to_period("M")
+        )["Amt_Diff"].sum().rename("Reissued")
+        
+        # 3. Settled: The final observed outstanding amount clears out on the Maturity Date
+        last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last")
+        settled = last_records.dropna(subset=["Mat_Dt"]).groupby(
+            last_records["Mat_Dt"].dt.to_period("M")
+        )["Amt_Cr"].sum().rename("Settled")
+        
+        monthly = pd.concat([newly_issued, reissued, settled], axis=1).fillna(0)
+        
+        # Ensure all columns exist in specific order
+        for c in cols:
+            if c not in monthly.columns:
+                monthly[c] = 0.0
+        return monthly[cols]
 
     # --- MATURITY DETAILS ---
     def compute_maturity_detail(df, target_end_date, days=30):
@@ -320,7 +368,6 @@ try:
                 temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
             ).fillna(0)
 
-            # Strict Weighted Average Calculation (Ignores missing/zero yields)
             valid_yields = temp_df[temp_df["Yield_Val"] > 0]
             if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
                 weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
@@ -368,14 +415,12 @@ try:
                 temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
             ).fillna(0)
 
-            # Strict Weighted Average Yield
             valid_yields = temp_df[temp_df["Yield_Val"] > 0]
             if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
                 weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
             else:
                 weighted_yield = 0.0
 
-            # Strict Weighted Average Coupon
             coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
             if coupon_col:
                 temp_df["Coupon_Val"] = pd.to_numeric(
@@ -427,9 +472,32 @@ try:
     with sum_col2:
         render_bonds_summary_table(df_securities, bond_end)
 
+    # --- 2. MONTHLY METRICS LEDGER (ISSUANCE & SETTLEMENT) ---
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
+    st.markdown("#### 📅 Monthly Issuance & Settlement Ledger (BDT Cr)")
+    
+    bills_monthly = calculate_monthly_metrics(df_bills)
+    bonds_monthly = calculate_monthly_metrics(df_securities)
 
-    # --- 2. MATURITY SNAPSHOT SECTION ---
+    if not bills_monthly.empty or not bonds_monthly.empty:
+        # Build the pivot-style MultiIndex columns
+        bills_monthly.columns = pd.MultiIndex.from_product([["Bills"], bills_monthly.columns])
+        bonds_monthly.columns = pd.MultiIndex.from_product([["Bonds"], bonds_monthly.columns])
+        
+        combined_monthly = bills_monthly.join(bonds_monthly, how="outer").fillna(0)
+        combined_monthly.sort_index(ascending=False, inplace=True)
+        
+        # Format index as Month-Year (e.g. Aug-26)
+        combined_monthly.index = combined_monthly.index.strftime("%b-%y")
+        combined_monthly.index.name = "Month Year"
+        
+        st.dataframe(combined_monthly.style.format("{:,.2f}"), width="stretch")
+    else:
+        st.info("Not enough data to compute monthly metrics for the selected range.")
+
+
+    # --- 3. MATURITY SNAPSHOT SECTION ---
+    st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
     st.markdown("#### ⏰ Maturity Snapshot (Next 30 Days)")
     mat_col1, mat_col2 = st.columns(2)
 
@@ -463,7 +531,7 @@ try:
 
     st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-    # --- 3. DETAIL TABS WITH EXCEL EXPORT ---
+    # --- 4. DETAIL TABS WITH EXCEL EXPORT ---
     tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
 
     with tab1:
