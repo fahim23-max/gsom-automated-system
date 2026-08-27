@@ -1,102 +1,63 @@
 import os
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
-# Page Configuration
-st.set_page_config(
-    page_title="GSOM Treasury Dashboard",
-    page_icon="📈",
-    layout="wide"
-)
+st.set_page_config(page_title="GSOM Treasury Dashboard", page_icon="📈", layout="wide")
 
-# Inject Custom CSS for Table Styling (Center-align & Fit Content)
+# Custom styling for table centering
 st.markdown("""
     <style>
-    /* Force tables and dataframes to fit content and center align text */
-    table {
-        width: auto !important;
-        margin-left: auto !important;
-        margin-right: auto !important;
-    }
-    th {
-        text-align: center !important;
-    }
-    td {
-        text-align: center !important;
-    }
+    table { width: auto !important; margin-left: auto !important; margin-right: auto !important; }
+    th, td { text-align: center !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# Database Connection
 DATABASE_URL = os.environ.get("DATABASE_URL")
 engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
 st.title("🏛️ GSOM Treasury & Securities Dashboard")
 st.markdown("Live data for Government Bonds, FRTBs, and T-Bills.")
 
-# Fetch available dates from database for filtering
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def get_available_dates():
-    with engine.connect() as conn:
-        # Combining available dates from both securities and bills tables
-        query = text("""
+    try:
+        query = """
             SELECT DISTINCT "Data_Date" FROM public.daily_securities
             UNION
             SELECT DISTINCT "Data_Date" FROM public.daily_bills
             ORDER BY "Data_Date" DESC;
-        """)
-        result = conn.execute(query).fetchall()
-    return [row[0] for row in result]
+        """
+        df = pd.read_sql(query, engine)
+        return df.iloc[:, 0].dropna().tolist()
+    except Exception as e:
+        st.error(f"Error fetching dates: {e}")
+        return []
 
 available_dates = get_available_dates()
 
 if not available_dates:
-    st.warning("No data found in the database. Please run your scrapers.")
+    st.warning("No data found in the database. Please check your tables or run scrapers.")
     st.stop()
 
-# --- SEARCH DATE FILTER AT THE TOP ---
 selected_date = st.selectbox("📅 Select Valuation Date", available_dates)
 
-# Fetch data for the selected date
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=30)
 def load_data_for_date(date_str):
-    with engine.connect() as conn:
-        bills_query = text(f"SELECT * FROM public.daily_bills WHERE \"Data_Date\" = '{date_str}'")
-        securities_query = text(f"SELECT * FROM public.daily_securities WHERE \"Data_Date\" = '{date_str}'")
-        
-        df_bills = pd.read_sql(bills_query, conn)
-        df_securities = pd.read_sql(securities_query, conn)
+    df_bills = pd.read_sql(f"SELECT * FROM public.daily_bills WHERE \"Data_Date\" = '{date_str}'", engine)
+    df_securities = pd.read_sql(f"SELECT * FROM public.daily_securities WHERE \"Data_Date\" = '{date_str}'", engine)
     return df_bills, df_securities
 
 df_bills, df_securities = load_data_for_date(selected_date)
 
-# Calculate Summary Metrics
 total_bills = len(df_bills)
 total_securities = len(df_securities)
 total_active = total_bills + total_securities
 
-# --- SUMMARY BOX PLACED JUST BELOW THE DATE SELECTOR ---
+# Summary Box
 st.markdown(f"""
-    <div style="
-        background-color: #f8f9fa; 
-        border: 1px solid #e0e0e0; 
-        border-radius: 8px; 
-        padding: 20px; 
-        margin-top: 10px;
-        margin-bottom: 25px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.02);
-    ">
-        <h4 style="
-            color: #1f2937; 
-            margin-top: 0; 
-            margin-bottom: 15px; 
-            font-size: 1.1rem; 
-            text-transform: uppercase; 
-            letter-spacing: 0.05em;
-            border-bottom: 2px solid #3b82f6;
-            padding-bottom: 8px;
-        ">
+    <div style="background-color: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 20px; margin-top: 10px; margin-bottom: 25px;">
+        <h4 style="color: #1f2937; margin-top: 0; margin-bottom: 15px; font-size: 1.1rem; text-transform: uppercase; border-bottom: 2px solid #3b82f6; padding-bottom: 8px;">
             📊 Market Summary & Overview ({selected_date})
         </h4>
         <div style="display: flex; justify-content: space-around; text-align: center;">
@@ -116,7 +77,6 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Tabs for detailed tables
 tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
 
 with tab1:
