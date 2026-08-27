@@ -237,9 +237,12 @@ try:
     def to_excel_bytes(df, sheet_name):
         buffer = io.BytesIO()
         export_df = df.copy()
+        
+        # Safely remove timezones for Excel compatibility without triggering deprecation warnings
         for col in export_df.columns:
             if isinstance(export_df[col].dtype, pd.DatetimeTZDtype):
                 export_df[col] = export_df[col].dt.tz_localize(None)
+                
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
         return buffer.getvalue()
@@ -278,7 +281,7 @@ try:
             return maturing, 0.0, 0, anchor_date
 
         crore = pd.to_numeric(
-            maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+            maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
 
         maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], format="mixed", errors="coerce")
@@ -309,15 +312,20 @@ try:
         
         if count > 0:
             temp_df["Outstanding_Crore"] = pd.to_numeric(
-                temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+                temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
             ).fillna(0) / 10.0
             total_crore = temp_df["Outstanding_Crore"].sum()
             
             temp_df["Yield_Val"] = pd.to_numeric(
-                temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+                temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
             ).fillna(0)
 
-            weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore if total_crore > 0 else 0.0
+            # Strict Weighted Average Calculation (Ignores missing/zero yields)
+            valid_yields = temp_df[temp_df["Yield_Val"] > 0]
+            if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
+                weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
+            else:
+                weighted_yield = 0.0
         else:
             total_crore = 0.0
             weighted_yield = 0.0
@@ -329,14 +337,14 @@ try:
                     <tr>
                         <th>Count</th>
                         <th>Amount (BDT Cr)</th>
-                        <th>Avg Yields</th>
+                        <th>WA Yield</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td>{count}</td>
                         <td>৳{total_crore:,.2f} Cr</td>
-                        <td>{weighted_yield:.2f}%</td>
+                        <td>{weighted_yield:.4f}%</td>
                     </tr>
                 </tbody>
             </table>
@@ -352,23 +360,34 @@ try:
         
         if count > 0:
             temp_df["Outstanding_Crore"] = pd.to_numeric(
-                temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", ""), errors="coerce"
+                temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
             ).fillna(0) / 10.0
             total_crore = temp_df["Outstanding_Crore"].sum()
             
             temp_df["Yield_Val"] = pd.to_numeric(
-                temp_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+                temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
             ).fillna(0)
 
-            weighted_yield = (temp_df["Yield_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore if total_crore > 0 else 0.0
+            # Strict Weighted Average Yield
+            valid_yields = temp_df[temp_df["Yield_Val"] > 0]
+            if not valid_yields.empty and valid_yields["Outstanding_Crore"].sum() > 0:
+                weighted_yield = (valid_yields["Yield_Val"] * valid_yields["Outstanding_Crore"]).sum() / valid_yields["Outstanding_Crore"].sum()
+            else:
+                weighted_yield = 0.0
 
+            # Strict Weighted Average Coupon
             coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
-            if coupon_col and total_crore > 0:
+            if coupon_col:
                 temp_df["Coupon_Val"] = pd.to_numeric(
-                    temp_df[coupon_col].astype(str).str.replace("%", "").str.strip(), errors="coerce"
+                    temp_df[coupon_col].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
                 ).fillna(0)
-                weighted_coupon = (temp_df["Coupon_Val"] * temp_df["Outstanding_Crore"]).sum() / total_crore
-                coupon_str = f"{weighted_coupon:.2f}%"
+                
+                valid_coupons = temp_df[temp_df["Coupon_Val"] > 0]
+                if not valid_coupons.empty and valid_coupons["Outstanding_Crore"].sum() > 0:
+                    weighted_coupon = (valid_coupons["Coupon_Val"] * valid_coupons["Outstanding_Crore"]).sum() / valid_coupons["Outstanding_Crore"].sum()
+                    coupon_str = f"{weighted_coupon:.4f}%"
+                else:
+                    coupon_str = "0.0000%"
             else:
                 coupon_str = "N/A"
         else:
@@ -383,15 +402,15 @@ try:
                     <tr>
                         <th>Count</th>
                         <th>Amount (BDT Cr)</th>
-                        <th>Avg Yields</th>
-                        <th>Avg Coupons</th>
+                        <th>WA Yield</th>
+                        <th>WA Coupon</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td>{count}</td>
                         <td>৳{total_crore:,.2f} Cr</td>
-                        <td>{weighted_yield:.2f}%</td>
+                        <td>{weighted_yield:.4f}%</td>
                         <td>{coupon_str}</td>
                     </tr>
                 </tbody>
