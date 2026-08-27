@@ -21,11 +21,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          playwright install --with-deps chromium
+          python -m playwright install --with-deps chromium
 
       - name: Run GSOM Scrapers
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          python scraper.py
           python scraper_bills.py
