@@ -6,3 +6,4 @@ beautifulsoup4
 SQLAlchemy
 psycopg2-binary
 streamlit
+playwright
