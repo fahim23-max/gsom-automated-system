@@ -1,3 +1,133 @@
+import os
+import asyncio
+import pandas as pd
+from datetime import datetime, timedelta
+from bs4 import BeautifulSoup
+from playwright.async_api import async_playwright
+from sqlalchemy import create_engine, text
+
+BASE_URL = "https://gsom.bb.org.bd/index.php/tbill"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+CONCURRENCY = 3
+
+async def scrape_date(date_str, context):
+    print(f"Scraping T-Bills for date: {date_str}...")
+    page = await context.new_page()
+    try:
+        # Block unnecessary assets for speed
+        await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
+        
+        url = f"{BASE_URL}?date={date_str}"
+        await page.goto(url, timeout=30000)
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
+        # Alternative: Fill picker input if URL parameter isn't enough
+        picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
+        try:
+            await page.fill("#picker_date", picker_value)
+            await page.keyboard.press("Escape")
+            await page.click("input[type='submit']")
+            await page.wait_for_load_state("domcontentloaded", timeout=10000)
+        except Exception:
+            pass
+        
+        try:
+            await page.wait_for_selector("table.table tbody tr", timeout=5000)
+        except Exception:
+            print(f"No T-Bill table found for {date_str}")
+            return None
+
+        html_content = await page.content()
+    except Exception as e:
+        print(f"Error scraping T-Bills for {date_str}: {e}")
+        return None
+    finally:
+        await page.close()
+
+    # Parse rows using BeautifulSoup
+    soup = BeautifulSoup(html_content, 'html.parser')
+    table = soup.find("table", {"class": "table"})
+    
+    if not table or not table.find("tbody"):
+        print(f"No table tbody found for T-Bills on {date_str}")
+        return None
+
+    rows = table.find("tbody").find_all("tr")
+    parsed_data = []
+
+    for row in rows:
+        cols = [c.get_text(strip=True) for c in row.find_all("td")]
+        if len(cols) >= 11:
+            try:
+                out_val = float(cols[10].replace(",", "").strip())
+            except Exception:
+                out_val = 0.0
+
+            parsed_data.append({
+                "Sl. No.": cols[0],
+                "ISIN": cols[1],
+                "Securities Name": cols[2],
+                "Securities Type": cols[3],
+                "Issue Date": cols[4],
+                "Maturity/ Expiry Date": cols[5],
+                "Issue Price": cols[6],
+                "Remaining Maturity": cols[7],
+                "Market Yield": cols[8],
+                "Market Price": cols[9],
+                "Outstanding BDT (in Mill)": out_val,
+                "Data_Date": date_str
+            })
+
+    if parsed_data:
+        df = pd.DataFrame(parsed_data)
+        print(f"Successfully extracted {len(df)} T-Bill rows for {date_str}")
+        return df
+    return None
+
+async def worker(name, queue, context, engine):
+    while True:
+        date_str = await queue.get()
+        if date_str is None:
+            queue.task_done()
+            break
+        
+        try:
+            df = await scrape_date(date_str, context)
+            if df is not None and not df.empty:
+                with engine.begin() as conn:
+                    for _, row in df.iterrows():
+                        sql = text("""
+                            INSERT INTO public.daily_bills 
+                            ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date", 
+                             "Maturity/ Expiry Date", "Issue Price", "Remaining Maturity", 
+                             "Market Yield", "Market Price", "Outstanding BDT (in Mill)", "Data_Date")
+                            VALUES (:sl, :isin, :name, :stype, :issue, :mat, :iprice, :rem, :yield_, :price, :out, :ddate)
+                            ON CONFLICT ("ISIN", "Data_Date") DO UPDATE SET
+                                "Market Yield" = EXCLUDED."Market Yield",
+                                "Market Price" = EXCLUDED."Market Price",
+                                "Outstanding BDT (in Mill)" = EXCLUDED."Outstanding BDT (in Mill)",
+                                "Remaining Maturity" = EXCLUDED."Remaining Maturity";
+                        """)
+                        conn.execute(sql, {
+                            "sl": row["Sl. No."],
+                            "isin": row["ISIN"],
+                            "name": row["Securities Name"],
+                            "stype": row["Securities Type"],
+                            "issue": row["Issue Date"],
+                            "mat": row["Maturity/ Expiry Date"],
+                            "iprice": row["Issue Price"],
+                            "rem": row["Remaining Maturity"],
+                            "yield_": row["Market Yield"],
+                            "price": row["Market Price"],
+                            "out": row["Outstanding BDT (in Mill)"],
+                            "ddate": row["Data_Date"]
+                        })
+                print(f"Successfully saved {len(df)} T-Bill rows to database for {date_str}", flush=True)
+        except Exception as e:
+            print(f"Worker {name} failed on {date_str}: {e}", flush=True)
+        finally:
+            queue.task_done()
+
 async def main():
     if not DATABASE_URL:
         print("Error: DATABASE_URL not set.")
@@ -9,11 +139,11 @@ async def main():
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
 
-        # Generate the last 5 days (e.g. today and recent past days to bypass holidays/weekends)
+        # Smart 5-day backtracking loop for T-Bills
         base_date = datetime.now()
         date_list = [(base_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
 
-        print(f"Checking recent dates for publishing availability: {date_list}")
+        print(f"Checking recent T-Bill dates for availability: {date_list}", flush=True)
 
         queue = asyncio.Queue()
         for d in date_list:
@@ -29,4 +159,7 @@ async def main():
             queue.put_nowait(None)
         await asyncio.gather(*workers)
         await browser.close()
-        print("Scrape & Database Sync Complete!", flush=True)
+        print("T-Bill Scrape & Database Sync Complete!", flush=True)
+
+if __name__ == "__main__":
+    asyncio.run(main())
