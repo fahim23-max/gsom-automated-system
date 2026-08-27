@@ -13,7 +13,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Custom CSS for Background Color, Centered Tables, and Metric Styling
+# Custom CSS for Background Color, Centered Tables, and Centered Metric Cards
 st.markdown("""
     <style>
     /* Full Page Background */
@@ -60,13 +60,35 @@ st.markdown("""
     .bill-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
     .bond-header { color: #dc2626; font-weight: bold; font-size: 1.15rem; margin-bottom: 4px; }
 
-    /* Streamlit Metric Cards Background */
+    /* Centered Streamlit Metric Cards */
     [data-testid="stMetric"] {
         background-color: #ffffff;
-        padding: 12px 16px;
+        padding: 16px 20px;
         border-radius: 8px;
         border: 1px solid #e2e8f0;
         box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+    }
+    [data-testid="stMetricLabel"] {
+        display: flex;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
+    }
+    [data-testid="stMetricValue"] {
+        display: flex;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
+    }
+    [data-testid="stMetricDelta"] {
+        display: flex;
+        justify-content: center;
+        text-align: center;
+        width: 100%;
     }
     </style>
 """, unsafe_allow_html=True)
