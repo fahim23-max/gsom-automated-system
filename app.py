@@ -40,7 +40,6 @@ with tab_bonds:
             if not bond_dates_df.empty:
                 available_bond_dates = bond_dates_df["Data_Date"].tolist()
                 
-                # Range or Single Date Selection Option
                 selection_mode = st.radio("Selection Mode (Bonds)", ["Single Date", "Date Range"], horizontal=True, key="bond_mode")
                 
                 if selection_mode == "Single Date":
@@ -70,34 +69,33 @@ with tab_bonds:
                     bonds_df = pd.read_sql(query_bonds, conn)
 
                 if not bonds_df.empty:
-                    # Clean Numerics for Analytics
                     bonds_df["Market Yield Num"] = pd.to_numeric(bonds_df["Market Yield"], errors="coerce")
                     bonds_df["Outstanding Num"] = pd.to_numeric(bonds_df["Outstanding BDT (in Mill)"], errors="coerce")
+                    
+                    # Convert Millions to Crore (1 Crore = 10 Million)
+                    bonds_df["Outstanding (Crore)"] = bonds_df["Outstanding Num"] / 10.0
 
                     st.markdown("### 📊 Market Summary by Instrument Type")
                     
-                    # Group by Securities Type / Category for Dashboard Metrics
+                    # Tabular Summary Layout
                     summary_df = bonds_df.groupby("Securities Type").agg(
-                        Count=("ISIN", "count"),
-                        Total_Outstanding=("Outstanding Num", "sum"),
-                        Avg_Yield=("Market Yield Num", "mean")
+                        Instrument_Count=("ISIN", "count"),
+                        Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
+                        Average_Yield=("Market Yield Num", "mean")
                     ).reset_index()
 
-                    cols = st.columns(len(summary_df) if len(summary_df) > 0 else 1)
-                    for idx, row in summary_df.iterrows():
-                        with cols[idx % len(cols)]:
-                            st.metric(
-                                label=f"{row['Securities Type']}",
-                                value=f"{row['Count']} Inst.",
-                                delta=f"Out: {row['Total_Outstanding']:,.1f} M | Yield: {row['Avg_Yield']:.2f}%"
-                            )
+                    summary_df["Total_Outstanding_Crore"] = summary_df["Total_Outstanding_Crore"].map("{:,.2f} Cr".format)
+                    summary_df["Average_Yield"] = summary_df["Average_Yield"].map("{:.2f}%".format)
+                    summary_df.columns = ["Securities Type", "Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
+
+                    st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
                     st.divider()
                     st.subheader("Detailed Data View & Download")
-                    st.dataframe(bonds_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore"), use_container_width=True)
+                    display_bonds = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore")
+                    st.dataframe(display_bonds, use_container_width=True)
 
-                    # Download Button
-                    csv_data = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore").to_csv(index=False).encode('utf-8')
+                    csv_data = display_bonds.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download Bond Data as CSV", data=csv_data, file_name="bonds_valuation_report.csv", mime="text/csv")
                 else:
                     st.info("No records found for the selected range.")
@@ -152,30 +150,30 @@ with tab_bills:
                 if not bills_df.empty:
                     bills_df["Market Yield Num"] = pd.to_numeric(bills_df["Market Yield"], errors="coerce")
                     bills_df["Outstanding Num"] = pd.to_numeric(bills_df["Outstanding BDT (in Mill)"], errors="coerce")
+                    
+                    # Convert Millions to Crore
+                    bills_df["Outstanding (Crore)"] = bills_df["Outstanding Num"] / 10.0
 
                     st.markdown("### 📊 T-Bill Market Summary by Tenor Type")
                     
                     bill_summary = bills_df.groupby("Securities Type").agg(
-                        Count=("ISIN", "count"),
-                        Total_Outstanding=("Outstanding Num", "sum"),
-                        Avg_Yield=("Market Yield Num", "mean")
+                        Instrument_Count=("ISIN", "count"),
+                        Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
+                        Average_Yield=("Market Yield Num", "mean")
                     ).reset_index()
 
-                    b_cols = st.columns(len(bill_summary) if len(bill_summary) > 0 else 1)
-                    for idx, row in bill_summary.iterrows():
-                        with b_cols[idx % len(b_cols)]:
-                            st.metric(
-                                label=f"{row['Securities Type']}",
-                                value=f"{row['Count']} Bills",
-                                delta=f"Out: {row['Total_Outstanding']:,.1f} M | Yield: {row['Avg_Yield']:.2f}%"
-                            )
+                    bill_summary["Total_Outstanding_Crore"] = bill_summary["Total_Outstanding_Crore"].map("{:,.2f} Cr".format)
+                    bill_summary["Average_Yield"] = bill_summary["Average_Yield"].map("{:.2f}%".format)
+                    bill_summary.columns = ["Securities Type", "Count", "Total Outstanding (BDT Crore)", "Average Market Yield"]
+
+                    st.dataframe(bill_summary, use_container_width=True, hide_index=True)
 
                     st.divider()
                     st.subheader("Detailed T-Bill View & Download")
-                    st.dataframe(bills_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore"), use_container_width=True)
+                    display_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore")
+                    st.dataframe(display_bills, use_container_width=True)
 
-                    # Download Button
-                    csv_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num"], errors="ignore").to_csv(index=False).encode('utf-8')
+                    csv_bills = display_bills.to_csv(index=False).encode('utf-8')
                     st.download_button("📥 Download T-Bill Data as CSV", data=csv_bills, file_name="tbills_valuation_report.csv", mime="text/csv")
                 else:
                     st.info("No T-Bill records found for the selected range.")
