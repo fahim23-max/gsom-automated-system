@@ -130,23 +130,42 @@ try:
         </div>
     """, unsafe_allow_html=True)
 
+    # --- SAFE UNION QUERY FOR AVAILABLE DATES ---
+    @st.cache_data(ttl=60)
+    def get_available_dates():
+        with engine.connect() as conn:
+            query = text("""
+                SELECT DISTINCT "Data_Date"::TEXT FROM public.daily_securities
+                UNION
+                SELECT DISTINCT "Data_Date"::TEXT FROM public.daily_bills
+                ORDER BY "Data_Date"::TEXT DESC;
+            """)
+            result = conn.execute(query).fetchall()
+        return [str(row[0]) for row in result]
+
+    available_dates = get_available_dates()
+
+    if not available_dates:
+        st.warning("No data found in the database. Please check your tables or run scrapers.")
+        st.stop()
+
     # --- AVAILABLE DATE BOUNDS ---
     @st.cache_data(ttl=30)
     def get_bill_date_bounds():
         df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_bills', engine)
+        if df.empty or pd.isna(df.iloc[0, 0]):
+            return None, None
         return df.iloc[0, 0], df.iloc[0, 1]
 
     @st.cache_data(ttl=30)
     def get_security_date_bounds():
         df = pd.read_sql('SELECT MIN("Data_Date")::TEXT, MAX("Data_Date")::TEXT FROM public.daily_securities', engine)
+        if df.empty or pd.isna(df.iloc[0, 0]):
+            return None, None
         return df.iloc[0, 0], df.iloc[0, 1]
 
     bill_min, bill_max = get_bill_date_bounds()
     sec_min, sec_max = get_security_date_bounds()
-
-    if not bill_min and not sec_min:
-        st.warning("No data found in the database. Please check your tables or run scrapers.")
-        st.stop()
 
     def to_date(s):
         return pd.to_datetime(s).date() if s else None
@@ -218,12 +237,9 @@ try:
     def to_excel_bytes(df, sheet_name):
         buffer = io.BytesIO()
         export_df = df.copy()
-        
-        # Safely remove timezones for Excel compatibility without triggering deprecation warnings
         for col in export_df.columns:
             if isinstance(export_df[col].dtype, pd.DatetimeTZDtype):
                 export_df[col] = export_df[col].dt.tz_localize(None)
-                
         with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
             export_df.to_excel(writer, index=False, sheet_name=sheet_name[:31])
         return buffer.getvalue()
@@ -254,7 +270,6 @@ try:
             return pd.DataFrame(), 0.0, 0, anchor_date
 
         base_dt = pd.to_datetime(anchor_date, errors="coerce")
-        # Added format="mixed" to prevent Dateutil warnings in logs
         mat_dt = pd.to_datetime(snapshot["Maturity/ Expiry Date"], format="mixed", errors="coerce")
         mask = (mat_dt >= base_dt) & (mat_dt <= base_dt + pd.Timedelta(days=days))
         maturing = snapshot[mask].copy()
@@ -409,7 +424,7 @@ try:
         """, unsafe_allow_html=True)
         
         if not bills_maturing.empty:
-            st.dataframe(bills_maturing, hide_index=True)
+            st.dataframe(bills_maturing, hide_index=True, width="stretch")
         else:
             st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -423,7 +438,7 @@ try:
         """, unsafe_allow_html=True)
 
         if not bonds_maturing.empty:
-            st.dataframe(bonds_maturing, hide_index=True)
+            st.dataframe(bonds_maturing, hide_index=True, width="stretch")
         else:
             st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
@@ -437,7 +452,7 @@ try:
         st.subheader(f"Treasury Bills — {range_label}")
         if not df_bills.empty:
             display_bills = df_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_bills.columns], errors="ignore")
-            st.dataframe(display_bills)
+            st.dataframe(display_bills, width="stretch")
             st.download_button(
                 "⬇️ Download T-Bills (Excel)",
                 data=to_excel_bytes(df_bills, "T-Bills"),
@@ -452,7 +467,7 @@ try:
         st.subheader(f"Bonds & FRTBs — {range_label}")
         if not df_securities.empty:
             display_sec = df_securities.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_securities.columns], errors="ignore")
-            st.dataframe(display_sec)
+            st.dataframe(display_sec, width="stretch")
             st.download_button(
                 "⬇️ Download Bonds/FRTBs (Excel)",
                 data=to_excel_bytes(df_securities, "Bonds_FRTB"),
