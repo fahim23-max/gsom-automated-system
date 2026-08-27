@@ -10,21 +10,20 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v3
+      
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
+          
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          python -m playwright install --with-deps chromium
-
-      - name: Run GSOM Scrapers
-        env:
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: |
-          python scraper_bills.py
+          playwright install chromium
+          
+      - name: Run T-Bill Scraper
+        run: python scraper_bills.py
+        
+      - name: Run Bond & FRTB Scraper
+        run: python scraper.py  # Replace with your actual bond script file name if different
