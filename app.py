@@ -392,7 +392,7 @@ with sum_col2:
 
 st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-# --- HISTORICAL YIELD CURVE SECTION ---
+# --- HISTORICAL YIELD CURVE SECTION (MULTI-SERIES FIXED) ---
 st.markdown("#### 📈 Historical Yield Curve Term Structure")
 yc_col1, yc_col2 = st.columns(2)
 
@@ -401,14 +401,12 @@ def render_historical_yield_curve(df, target_end_date, title):
         st.info(f"No historical chart data available for {title}.")
         return
 
-    # Find available unique dates in the loaded range, sorted descending
     available_dates = sorted(df["Data_Date"].astype(str).unique(), reverse=True)
     if not available_dates:
         st.info(f"No dates found for {title}.")
         return
 
-    # Let user select up to 3 comparative historical dates from the range
-    default_selected = available_dates[:3] # Latest, and up to 2 prior dates
+    default_selected = available_dates[:3]
     selected_curve_dates = st.multiselect(
         f"Select Comparative Dates for {title}",
         options=available_dates,
@@ -420,7 +418,6 @@ def render_historical_yield_curve(df, target_end_date, title):
         st.warning("Please select at least one date to display the yield curve.")
         return
 
-    # Filter frame for selected dates
     sub_df = df[df["Data_Date"].astype(str).isin(selected_curve_dates)].copy()
     sub_df["Market Yield (%)"] = pd.to_numeric(
         sub_df["Market Yield"].astype(str).str.replace("%", "").str.strip(), errors="coerce"
@@ -434,14 +431,15 @@ def render_historical_yield_curve(df, target_end_date, title):
         st.info(f"Insufficient numeric maturity data across selected dates for {title}.")
         return
 
-    # Pivot data so each date becomes a separate line column
-    pivot_chart = sub_df.pivot_table(
+    # Aggregate by Maturity and Date to prevent collision, then pivot cleanly
+    agg_df = sub_df.groupby(["Remaining Maturity (Yrs)", "Data_Date"], as_index=False)["Market Yield (%)"].mean()
+    pivot_chart = agg_df.pivot(
         index="Remaining Maturity (Yrs)", 
         columns="Data_Date", 
         values="Market Yield (%)"
     ).sort_index()
 
-    st.line_chart(pivot_chart)
+    st.line_chart(pivot_chart, use_container_width=True)
 
 with yc_col1:
     render_historical_yield_curve(df_bills, bill_end, "Treasury Bills")
