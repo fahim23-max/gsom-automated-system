@@ -81,9 +81,12 @@ with tab_bonds:
                     bonds_df["Maturity Date Parsed"] = pd.to_datetime(bonds_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
                     bonds_df["Data_Date_Parsed"] = pd.to_datetime(bonds_df["Data_Date"])
 
-                    # Summary by Instrument Type
-                    st.markdown("### 📈 Summary by Instrument Type")
-                    summary_df = bonds_df.groupby("Securities Type").agg(
+                    # Baseline for summary metrics: Use the latest date in the fetched dataset (prevents multi-day accumulation)
+                    baseline_date = bonds_df["Data_Date_Parsed"].max()
+                    summary_source_df = bonds_df[bonds_df["Data_Date_Parsed"] == baseline_date]
+
+                    st.markdown(f"### 📈 Summary by Instrument Type (Snapshot as of {baseline_date.strftime('%Y-%m-%d')})")
+                    summary_df = summary_source_df.groupby("Securities Type").agg(
                         Instrument_Count=("ISIN", "count"),
                         Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
                         Average_Yield=("Market Yield Num", "mean")
@@ -95,12 +98,10 @@ with tab_bonds:
                     st.dataframe(summary_df, use_container_width=True, hide_index=True)
 
                     # Maturities in Next 30 Days (Anchored to Highest Date in View)
-                    baseline_date = bonds_df["Data_Date_Parsed"].max()
                     thirty_days_later = baseline_date + timedelta(days=30)
-                    
-                    maturing_bonds = bonds_df[
-                        (bonds_df["Maturity Date Parsed"] >= baseline_date) & 
-                        (bonds_df["Maturity Date Parsed"] <= thirty_days_later)
+                    maturing_bonds = summary_source_df[
+                        (summary_source_df["Maturity Date Parsed"] >= baseline_date) & 
+                        (summary_source_df["Maturity Date Parsed"] <= thirty_days_later)
                     ]
 
                     st.markdown(f"### ⏳ Maturities in Next 30 Days (from highest date: {baseline_date.strftime('%Y-%m-%d')})")
@@ -113,7 +114,7 @@ with tab_bonds:
                     else:
                         st.info("No bond instruments maturing in the 30 days following the highest date in this range.")
 
-                    st.markdown("### 📋 Detailed Records")
+                    st.markdown("### 📋 Detailed Records (Full Range History)")
                     display_bonds = bonds_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bonds, use_container_width=True)
 
@@ -180,9 +181,12 @@ with tab_bills:
                     bills_df["Maturity Date Parsed"] = pd.to_datetime(bills_df["Maturity/ Expiry Date"], errors="coerce", format="mixed")
                     bills_df["Data_Date_Parsed"] = pd.to_datetime(bills_df["Data_Date"])
 
-                    # Summary by Tenor Type
-                    st.markdown("### 📈 Summary by Tenor Type")
-                    bill_summary = bills_df.groupby("Securities Type").agg(
+                    # Baseline for summary metrics: Use the latest date in the fetched dataset
+                    baseline_bill_date = bills_df["Data_Date_Parsed"].max()
+                    summary_bill_source = bills_df[bills_df["Data_Date_Parsed"] == baseline_bill_date]
+
+                    st.markdown(f"### 📈 Summary by Tenor Type (Snapshot as of {baseline_bill_date.strftime('%Y-%m-%d')})")
+                    bill_summary = summary_bill_source.groupby("Securities Type").agg(
                         Instrument_Count=("ISIN", "count"),
                         Total_Outstanding_Crore=("Outstanding (Crore)", "sum"),
                         Average_Yield=("Market Yield Num", "mean")
@@ -194,12 +198,10 @@ with tab_bills:
                     st.dataframe(bill_summary, use_container_width=True, hide_index=True)
 
                     # Maturities in Next 30 Days (Anchored to Highest Date in View)
-                    baseline_bill_date = bills_df["Data_Date_Parsed"].max()
                     thirty_days_later_bills = baseline_bill_date + timedelta(days=30)
-                    
-                    maturing_bills = bills_df[
-                        (bills_df["Maturity Date Parsed"] >= baseline_bill_date) & 
-                        (bills_df["Maturity Date Parsed"] <= thirty_days_later_bills)
+                    maturing_bills = summary_bill_source[
+                        (summary_bill_source["Maturity Date Parsed"] >= baseline_bill_date) & 
+                        (summary_bill_source["Maturity Date Parsed"] <= thirty_days_later_bills)
                     ]
 
                     st.markdown(f"### ⏳ Maturities in Next 30 Days (from highest date: {baseline_bill_date.strftime('%Y-%m-%d')})")
@@ -212,7 +214,7 @@ with tab_bills:
                     else:
                         st.info("No Treasury Bills maturing in the 30 days following the highest date in this range.")
 
-                    st.markdown("### 📋 Detailed Records")
+                    st.markdown("### 📋 Detailed Records (Full Range History)")
                     display_bills = bills_df.drop(columns=["Market Yield Num", "Outstanding Num", "Maturity Date Parsed", "Data_Date_Parsed"], errors="ignore")
                     st.dataframe(display_bills, use_container_width=True)
 
