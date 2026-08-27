@@ -161,25 +161,6 @@ try:
         </div>
     """, unsafe_allow_html=True)
 
-    # --- SAFE UNION QUERY FOR AVAILABLE DATES ---
-    @st.cache_data(ttl=60)
-    def get_available_dates():
-        with engine.connect() as conn:
-            query = text("""
-                SELECT DISTINCT "Data_Date"::TEXT FROM public.daily_securities
-                UNION
-                SELECT DISTINCT "Data_Date"::TEXT FROM public.daily_bills
-                ORDER BY "Data_Date"::TEXT DESC;
-            """)
-            result = conn.execute(query).fetchall()
-        return [str(row[0]) for row in result]
-
-    available_dates = get_available_dates()
-
-    if not available_dates:
-        st.warning("No data found in the database. Please check your tables or run scrapers.")
-        st.stop()
-
     # --- AVAILABLE DATE BOUNDS ---
     @st.cache_data(ttl=30)
     def get_bill_date_bounds():
@@ -208,7 +189,7 @@ try:
         start = max(mn, mx - timedelta(days=lookback_days))
         return start, mx
 
-    # --- DATE RANGE PICKERS (WRAPPED IN FORM) ---
+    # --- DATE RANGE PICKERS (FORM WRAPPED) ---
     with st.form("search_form"):
         st.markdown("#### 🔎 Select Date Range")
         range_col1, range_col2 = st.columns(2)
@@ -249,7 +230,7 @@ try:
     bill_start, bill_end = unpack_range(bill_range)
     bond_start, bond_end = unpack_range(bond_range)
 
-    # --- LOAD RANGE-FILTERED DATA FOR SUMMARY & TABS ---
+    # --- LOAD RANGE-FILTERED DATA ---
     @st.cache_data(ttl=30)
     def load_bills_range(start_d, end_d):
         if not start_d or not end_d:
@@ -305,15 +286,13 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- LIGHTNING-FAST LIGHTWEIGHT LEDGER LOADER ---
+    # --- LIGHTNING-FAST CACHED MONTHLY METRICS CALCULATION ---
     @st.cache_data(ttl=300)
     def calculate_monthly_metrics(table_name, is_frtb=None):
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
         
         if table_name == "daily_securities" and is_frtb is not None:
-            cond = "WHERE UPPER(CAST(t AS TEXT)) LIKE '%FRTB%'" if is_frtb else "WHERE UPPER(CAST(t AS TEXT)) NOT LIKE '%FRTB%'"
-            # Use quick sampling query to prevent pulling heavy raw dumps
-            q = text(f'SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities')
+            q = text('SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.daily_securities')
         else:
             q = text(f'SELECT "ISIN", "Data_Date", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)", "Market Yield" FROM public.{table_name}')
             
