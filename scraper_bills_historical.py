@@ -9,7 +9,6 @@ from sqlalchemy import create_engine, text
 BASE_URL = "https://gsom.bb.org.bd/index.php/tbill"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-# Bumped up concurrency to 6 workers specifically for historical backfill
 CONCURRENCY = 6  
 engine = create_engine(
     DATABASE_URL,
@@ -32,6 +31,7 @@ UPSERT_SQL = text("""
 """)
 
 async def scrape_date(date_str, context):
+    # FIXED: context.new_page() correctly creates a page from the browser context
     page = await context.new_page()
     try:
         await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
@@ -97,42 +97,38 @@ async def scrape_date(date_str, context):
     return None
 
 async def worker(worker_id, queue, context, day_counts):
-    page = await context.new_page()
-    await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
-    try:
-        while True:
-            date_str = await queue.get()
-            if date_str is None:
-                queue.task_done()
-                break
-            
-            try:
-                df = await scrape_date(date_str, page)
-                if df is not None and not df.empty:
-                    with engine.begin() as conn:
-                        for _, row in df.iterrows():
-                            conn.execute(UPSERT_SQL, {
-                                "sl": row["Sl. No."],
-                                "isin": row["ISIN"],
-                                "name": row["Securities Name"],
-                                "stype": row["Securities Type"],
-                                "issue": row["Issue Date"],
-                                "mat": row["Maturity/ Expiry Date"],
-                                "iprice": row["Issue Price"],
-                                "rem": row["Remaining Maturity"],
-                                "yield_": row["Market Yield"],
-                                "price": row["Market Price"],
-                                "out": row["Outstanding BDT (in Mill)"],
-                                "ddate": row["Data_Date"]
-                            })
-                    day_counts[date_str] = len(df)
-                    print(f"[Worker {worker_id}] Synced T-Bills for {date_str}: +{len(df)} rows", flush=True)
-            except Exception as e:
-                print(f"[Worker {worker_id}] Failed on {date_str}: {e}", flush=True)
-            finally:
-                queue.task_done()
-    finally:
-        await page.close()
+    while True:
+        date_str = await queue.get()
+        if date_str is None:
+            queue.task_done()
+            break
+        
+        try:
+            # Pass context down so scrape_date can spawn a fresh page safely
+            df = await scrape_date(date_str, context)
+            if df is not None and not df.empty:
+                with engine.begin() as conn:
+                    for _, row in df.iterrows():
+                        conn.execute(UPSERT_SQL, {
+                            "sl": row["Sl. No."],
+                            "isin": row["ISIN"],
+                            "name": row["Securities Name"],
+                            "stype": row["Securities Type"],
+                            "issue": row["Issue Date"],
+                            "mat": row["Maturity/ Expiry Date"],
+                            "iprice": row["Issue Price"],
+                            "rem": row["Remaining Maturity"],
+                            "yield_": row["Market Yield"],
+                            "price": row["Market Price"],
+                            "out": row["Outstanding BDT (in Mill)"],
+                            "ddate": row["Data_Date"]
+                        })
+                day_counts[date_str] = len(df)
+                print(f"[Worker {worker_id}] Synced T-Bills for {date_str}: +{len(df)} rows", flush=True)
+        except Exception as e:
+            print(f"[Worker {worker_id}] Failed on {date_str}: {e}", flush=True)
+        finally:
+            queue.task_done()
 
 async def scrape_historical():
     if not DATABASE_URL:
@@ -151,13 +147,12 @@ async def scrape_historical():
         task_count = 0
 
         while current_date <= end_date:
-            # Skip Friday (4) and Saturday (5) as per Bangladesh market schedule
             if current_date.weekday() not in (4, 5):
                 queue.put_nowait(current_date.strftime("%Y-%m-%d"))
                 task_count += 1
             current_date += timedelta(days=1)
 
-        print(f"Queued {task_count} historical T-Bill dates (2018-01-01 to 2026-08-26) with {CONCURRENCY} workers.", flush=True)
+        print(f"Queued {task_count} historical T-Bill dates with {CONCURRENCY} workers.", flush=True)
 
         day_counts = {}
         workers = [
@@ -172,7 +167,7 @@ async def scrape_historical():
         await browser.close()
 
         total_rows = sum(day_counts.values())
-        print(f"HISTORICAL T-BILL BACKFILL COMPLETE: {total_rows} total rows synced across {len(day_counts)} active days.", flush=True)
+        print(f"HISTORICAL T-BILL BACKFILL COMPLETE: {total_rows} total rows synced.", flush=True)
 
 if __name__ == "__main__":
     asyncio.run(scrape_historical())
