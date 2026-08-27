@@ -308,13 +308,15 @@ try:
         snapshot = df[df["Data_Date"] == latest_date].drop_duplicates(subset=["ISIN"], keep="first").copy()
         return snapshot, str(latest_date)
 
-    # --- MONTHLY METRICS CALCULATION (INCLUDING YIELD) ---
+    # --- MONTHLY METRICS CALCULATION (NEW, REISSUED & ALREADY SETTLED) ---
     def calculate_monthly_metrics(df):
         cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
             return pd.DataFrame(columns=cols)
             
         temp_df = df.copy()
+        
+        # 1. Clean and convert numeric/date columns
         temp_df["Amt_Cr"] = pd.to_numeric(
             temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
@@ -323,25 +325,31 @@ try:
             temp_df["Market Yield"].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
         ).fillna(0)
         
-        temp_df["Data_Dt"] = pd.to_datetime(temp_df["Data_Date"], errors="coerce")
+        temp_df["Data_Dt"] = pd.to_datetime(temp_df["Data_Date"], errors="coerce").dt.normalize()
         
         issue_col = "Issue Date" if "Issue Date" in temp_df.columns else None
         mat_col = "Maturity/ Expiry Date" if "Maturity/ Expiry Date" in temp_df.columns else None
         
-        temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce") if issue_col else pd.NaT
-        temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce") if mat_col else pd.NaT
+        temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce").dt.normalize() if issue_col else pd.NaT
+        temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce").dt.normalize() if mat_col else pd.NaT
         
+        # Determine strict bounds based on the data queried
+        min_data_month = temp_df["Data_Dt"].min().to_period("M")
+        max_data_month = temp_df["Data_Dt"].max().to_period("M")
+        max_date = temp_df["Data_Dt"].max()
+        
+        # Sort chronologically to correctly track outstanding amount changes
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
         
-        # 1. Newly Issued
-        first_records = temp_df.drop_duplicates(subset=["ISIN"], keep="first").copy()
+        # --- A. NEWLY ISSUED ---
+        first_records = temp_df[temp_df["Amt_Cr"] > 0].drop_duplicates(subset=["ISIN"], keep="first").copy()
         first_records = first_records.dropna(subset=["Issue_Dt"])
         first_records["Month"] = first_records["Issue_Dt"].dt.to_period("M")
         
         newly_issued = first_records.groupby("Month")["Amt_Cr"].sum().rename("Newly Issued")
         newly_issued_yield_vol = (first_records["Amt_Cr"] * first_records["Yield_Val"]).groupby(first_records["Month"]).sum()
         
-        # 2. Reissued
+        # --- B. REISSUED ---
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
         reissues = temp_df[temp_df["Amt_Diff"] > 0].copy()
         reissues = reissues.dropna(subset=["Data_Dt"])
@@ -350,23 +358,31 @@ try:
         reissued = reissues.groupby("Month")["Amt_Diff"].sum().rename("Reissued")
         reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
         
-        # Calculate WA Yield of issuance/reissuance
+        # --- C. WA YIELD ---
         total_vol = newly_issued.add(reissued, fill_value=0)
         total_yield_vol = newly_issued_yield_vol.add(reissued_yield_vol, fill_value=0)
         wa_yield = (total_yield_vol / total_vol).fillna(0).rename("WA Yield")
         
-        # 3. Settled
-        max_date = temp_df["Data_Dt"].max()
+        # --- D. SETTLED ---
+        max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
         last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
+        last_records = last_records.merge(max_amt_per_isin, on="ISIN")
+        
         past_maturities = last_records[last_records["Mat_Dt"] <= max_date].dropna(subset=["Mat_Dt"])
+        past_maturities["Month"] = past_maturities["Mat_Dt"].dt.to_period("M")
         
-        settled = past_maturities.groupby(past_maturities["Mat_Dt"].dt.to_period("M"))["Amt_Cr"].sum().rename("Settled")
+        settled = past_maturities.groupby("Month")["Max_Amt"].sum().rename("Settled")
         
+        # --- E. COMBINE & TRUNCATE ---
         monthly = pd.concat([newly_issued, reissued, wa_yield, settled], axis=1).fillna(0)
+        
+        if not monthly.empty:
+            monthly = monthly[(monthly.index >= min_data_month) & (monthly.index <= max_data_month)]
         
         for c in cols:
             if c not in monthly.columns:
                 monthly[c] = 0.0
+                
         return monthly[cols]
 
     # --- MATURITY DETAILS ---
