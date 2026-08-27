@@ -1,14 +1,13 @@
 import os
 import asyncio
 from datetime import datetime, timedelta
-import re
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from sqlalchemy import create_engine, text
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-CONCURRENCY = 6  # Slightly bumped up for faster processing
+CONCURRENCY = 6  
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
@@ -22,7 +21,8 @@ CATEGORIES = {
     "T-Bond": "https://gsom.bb.org.bd/index.php/tbond?date={date_str}"
 }
 
-INSERT_SQL = text("""
+# Updated with ON CONFLICT so re-scraping the same date overwrites instead of throwing errors
+UPSERT_SQL = text("""
     INSERT INTO public.daily_securities
     ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date",
      "Maturity/ Expiry Date", "Coupon Rate", "Coupon Freqency", "Last Coupon Date",
@@ -31,18 +31,13 @@ INSERT_SQL = text("""
     VALUES (:sl_no, :isin, :sec_name, :sec_type, :issue_date,
             :maturity_date, :coupon_rate, :coupon_freq, :last_coupon,
             :next_coupon, :issue_price, :rem_maturity, :market_yield,
-            :market_price, :outstanding_bdt, :category, :extracted_date);
+            :market_price, :outstanding_bdt, :category, :extracted_date)
+    ON CONFLICT ("ISIN", "Data_Date") DO UPDATE SET
+        "Market Yield" = EXCLUDED."Market Yield",
+        "Market Price" = EXCLUDED."Market Price",
+        "Outstanding BDT (in Mill)" = EXCLUDED."Outstanding BDT (in Mill)",
+        "Remaining Maturity" = EXCLUDED."Remaining Maturity";
 """)
-
-
-def parse_bb_date(date_str):
-    try:
-        clean_str = date_str.replace("[", "").replace("]", "").strip()
-        dt = datetime.strptime(clean_str, "%d-%b-%y")
-        return dt.strftime("%Y-%m-%d")
-    except Exception:
-        return None
-
 
 def parse_row(cat_name, cols, extracted_date):
     if len(cols) < 15:
@@ -77,15 +72,13 @@ def parse_row(cat_name, cols, extracted_date):
         "category": cat_name, "extracted_date": extracted_date,
     }
 
-
 def insert_records(records):
     with engine.begin() as conn:
-        conn.execute(INSERT_SQL, records)
-
+        conn.execute(UPSERT_SQL, records)
 
 async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries=3):
     url = url_template.format(date_str=date_str)
-    extracted_date = date_str  # Enforce target search date
+    extracted_date = date_str
 
     html_content = None
     for attempt in range(1, retries + 1):
@@ -132,7 +125,6 @@ async def scrape_one(page, date_str, cat_name, url_template, day_counts, retries
     day_counts[date_str] = day_counts.get(date_str, 0) + len(records)
     print(f"  {cat_name} {date_str}: +{len(records)} rows", flush=True)
 
-
 async def worker(worker_id, queue, context, day_counts):
     page = await context.new_page()
     await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
@@ -148,28 +140,24 @@ async def worker(worker_id, queue, context, day_counts):
     finally:
         await page.close()
 
-
-async def scrape_historical_range():
+async def scrape_recent_range():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
 
-        end_date = datetime.strptime("2021-08-26", "%Y-%m-%d").date()
-        start_date = datetime.strptime("2018-01-01", "%Y-%m-%d").date()
+        # Smart 5-day backtracking to gracefully handle holidays/weekends when today's data is blank
+        base_date = datetime.now()
+        dates_to_check = [(base_date - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(5)]
 
         queue = asyncio.Queue()
-        current_date = start_date
         task_count = 0
-        while current_date <= end_date:
-            # Skip Friday (4) and Saturday (5) for Bangladesh market schedule
-            if current_date.weekday() not in (4, 5):
-                date_str = current_date.strftime("%Y-%m-%d")
-                for cat_name, url_template in CATEGORIES.items():
-                    queue.put_nowait((date_str, cat_name, url_template))
-                    task_count += 1
-            current_date += timedelta(days=1)
+        
+        for date_str in dates_to_check:
+            for cat_name, url_template in CATEGORIES.items():
+                queue.put_nowait((date_str, cat_name, url_template))
+                task_count += 1
 
-        print(f"Queued {task_count} tasks (FRTB + T-Bond) with {CONCURRENCY} concurrent workers", flush=True)
+        print(f"Queued {task_count} tasks across recent dates {dates_to_check} with {CONCURRENCY} workers", flush=True)
 
         day_counts = {}
         workers = [
@@ -186,8 +174,7 @@ async def scrape_historical_range():
         await browser.close()
 
         total = sum(day_counts.values())
-        print(f"DONE: {total} total rows across {len(day_counts)} days with data", flush=True)
-
+        print(f"DONE: {total} total rows successfully synced across {len(day_counts)} available active dates", flush=True)
 
 if __name__ == "__main__":
-    asyncio.run(scrape_historical_range())
+    asyncio.run(scrape_recent_range())
