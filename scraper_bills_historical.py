@@ -1,6 +1,5 @@
 import os
 import asyncio
-import pandas as pd
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
@@ -9,7 +8,7 @@ from sqlalchemy import create_engine, text
 BASE_URL = "https://gsom.bb.org.bd/index.php/tbill"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-CONCURRENCY = 6  
+CONCURRENCY = 10  # was 6 - can push higher now DB writes no longer block the event loop; watch for errors
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
@@ -18,9 +17,9 @@ engine = create_engine(
 )
 
 UPSERT_SQL = text("""
-    INSERT INTO public.daily_bills 
-    ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date", 
-     "Maturity/ Expiry Date", "Issue Price", "Remaining Maturity", 
+    INSERT INTO public.daily_bills
+    ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date",
+     "Maturity/ Expiry Date", "Issue Price", "Remaining Maturity",
      "Market Yield", "Market Price", "Outstanding BDT (in Mill)", "Data_Date")
     VALUES (:sl, :isin, :name, :stype, :issue, :mat, :iprice, :rem, :yield_, :price, :out, :ddate)
     ON CONFLICT ("ISIN", "Data_Date") DO UPDATE SET
@@ -30,105 +29,82 @@ UPSERT_SQL = text("""
         "Remaining Maturity" = EXCLUDED."Remaining Maturity";
 """)
 
-async def scrape_date(date_str, context):
-    # FIXED: context.new_page() correctly creates a page from the browser context
-    page = await context.new_page()
+
+def upsert_records(records):
+    """Blocking DB call - always invoked via asyncio.to_thread so it never
+    stalls other workers' browser activity while it waits on the DB."""
+    with engine.begin() as conn:
+        conn.execute(UPSERT_SQL, records)
+
+
+async def scrape_date(page, date_str):
+    picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
+
     try:
-        await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
-        
-        url = f"{BASE_URL}?date={date_str}"
-        await page.goto(url, timeout=30000)
+        await page.goto(BASE_URL, timeout=30000)
         await page.wait_for_load_state("domcontentloaded", timeout=10000)
 
-        picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
-        try:
-            await page.fill("#picker_date", picker_value)
-            await page.keyboard.press("Escape")
-            await page.click("input[type='submit']")
-            await page.wait_for_load_state("domcontentloaded", timeout=10000)
-        except Exception:
-            pass
-        
+        await page.fill("#picker_date", picker_value)
+        await page.keyboard.press("Escape")
+        await page.click("input[type='submit']")
+        await page.wait_for_load_state("domcontentloaded", timeout=10000)
+
         try:
             await page.wait_for_selector("table.table tbody tr", timeout=4000)
         except Exception:
-            return None
+            return None  # legitimately no rows for this date, or table never populated
 
         html_content = await page.content()
     except Exception:
         return None
-    finally:
-        await page.close()
 
     soup = BeautifulSoup(html_content, 'html.parser')
     table = soup.find("table", {"class": "table"})
-    
     if not table or not table.find("tbody"):
         return None
 
     rows = table.find("tbody").find_all("tr")
-    parsed_data = []
-
+    records = []
     for row in rows:
         cols = [c.get_text(strip=True) for c in row.find_all("td")]
-        if len(cols) >= 11:
-            try:
-                out_val = float(cols[10].replace(",", "").strip())
-            except Exception:
-                out_val = 0.0
+        if len(cols) < 11:
+            continue
+        try:
+            out_val = float(cols[10].replace(",", "").strip())
+        except Exception:
+            out_val = 0.0
 
-            parsed_data.append({
-                "Sl. No.": cols[0],
-                "ISIN": cols[1],
-                "Securities Name": cols[2],
-                "Securities Type": cols[3],
-                "Issue Date": cols[4],
-                "Maturity/ Expiry Date": cols[5],
-                "Issue Price": cols[6],
-                "Remaining Maturity": cols[7],
-                "Market Yield": cols[8],
-                "Market Price": cols[9],
-                "Outstanding BDT (in Mill)": out_val,
-                "Data_Date": date_str
-            })
+        records.append({
+            "sl": cols[0], "isin": cols[1], "name": cols[2], "stype": cols[3],
+            "issue": cols[4], "mat": cols[5], "iprice": cols[6], "rem": cols[7],
+            "yield_": cols[8], "price": cols[9], "out": out_val, "ddate": date_str,
+        })
 
-    if parsed_data:
-        return pd.DataFrame(parsed_data)
-    return None
+    return records or None
+
 
 async def worker(worker_id, queue, context, day_counts):
-    while True:
-        date_str = await queue.get()
-        if date_str is None:
-            queue.task_done()
-            break
-        
-        try:
-            # Pass context down so scrape_date can spawn a fresh page safely
-            df = await scrape_date(date_str, context)
-            if df is not None and not df.empty:
-                with engine.begin() as conn:
-                    for _, row in df.iterrows():
-                        conn.execute(UPSERT_SQL, {
-                            "sl": row["Sl. No."],
-                            "isin": row["ISIN"],
-                            "name": row["Securities Name"],
-                            "stype": row["Securities Type"],
-                            "issue": row["Issue Date"],
-                            "mat": row["Maturity/ Expiry Date"],
-                            "iprice": row["Issue Price"],
-                            "rem": row["Remaining Maturity"],
-                            "yield_": row["Market Yield"],
-                            "price": row["Market Price"],
-                            "out": row["Outstanding BDT (in Mill)"],
-                            "ddate": row["Data_Date"]
-                        })
-                day_counts[date_str] = len(df)
-                print(f"[Worker {worker_id}] Synced T-Bills for {date_str}: +{len(df)} rows", flush=True)
-        except Exception as e:
-            print(f"[Worker {worker_id}] Failed on {date_str}: {e}", flush=True)
-        finally:
-            queue.task_done()
+    page = await context.new_page()
+    await page.route("**/*.{png,jpg,jpeg,css,font,woff,svg}", lambda route: route.abort())
+    try:
+        while True:
+            date_str = await queue.get()
+            if date_str is None:
+                queue.task_done()
+                break
+            try:
+                records = await scrape_date(page, date_str)
+                if records:
+                    await asyncio.to_thread(upsert_records, records)
+                    day_counts[date_str] = len(records)
+                    print(f"[Worker {worker_id}] {date_str}: +{len(records)} rows", flush=True)
+            except Exception as e:
+                print(f"[Worker {worker_id}] Failed on {date_str}: {e}", flush=True)
+            finally:
+                queue.task_done()
+    finally:
+        await page.close()
+
 
 async def scrape_historical():
     if not DATABASE_URL:
@@ -168,6 +144,7 @@ async def scrape_historical():
 
         total_rows = sum(day_counts.values())
         print(f"HISTORICAL T-BILL BACKFILL COMPLETE: {total_rows} total rows synced.", flush=True)
+
 
 if __name__ == "__main__":
     asyncio.run(scrape_historical())
