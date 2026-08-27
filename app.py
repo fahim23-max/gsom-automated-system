@@ -406,7 +406,7 @@ try:
         if not bills_maturing.empty:
             st.dataframe(
                 bills_maturing,
-                use_container_width=True, hide_index=True, height=180,
+                hide_index=True, height=180,
             )
         else:
             st.caption("No T-Bill ISINs maturing in the next 30 days.")
@@ -423,7 +423,7 @@ try:
         if not bonds_maturing.empty:
             st.dataframe(
                 bonds_maturing,
-                use_container_width=True, hide_index=True, height=180,
+                hide_index=True, height=180,
             )
         else:
             st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
@@ -438,7 +438,7 @@ try:
         st.subheader(f"Treasury Bills — {range_label}")
         if not df_bills.empty:
             display_bills = df_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_bills.columns], errors="ignore")
-            st.dataframe(display_bills, use_container_width=True)
+            st.dataframe(display_bills)
             st.download_button(
                 "⬇️ Download T-Bills (Excel)",
                 data=to_excel_bytes(df_bills, "T-Bills"),
@@ -453,7 +453,7 @@ try:
         st.subheader(f"Bonds & FRTBs — {range_label}")
         if not df_securities.empty:
             display_sec = df_securities.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_securities.columns], errors="ignore")
-            st.dataframe(display_sec, use_container_width=True)
+            st.dataframe(display_sec)
             st.download_button(
                 "⬇️ Download Bonds/FRTBs (Excel)",
                 data=to_excel_bytes(df_securities, "Bonds_FRTB"),
