@@ -25,6 +25,46 @@ try:
             padding-top: 1.5rem;
             padding-bottom: 2.5rem;
         }
+        
+        /* Universal Styled Data Table (Center Aligned, Bold & Black Headers) */
+        .custom-data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            margin-bottom: 14px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            border: 1px solid #cbd5e1;
+        }
+        .custom-data-table th {
+            background-color: #e2e8f0 !important;
+            color: #000000 !important;
+            font-weight: 800 !important;
+            text-align: center !important;
+            vertical-align: middle !important;
+            padding: 10px 8px !important;
+            border: 1px solid #cbd5e1 !important;
+            font-size: 0.90rem !important;
+            letter-spacing: 0.02em;
+        }
+        .custom-data-table td {
+            text-align: center !important;
+            vertical-align: middle !important;
+            padding: 8px 10px !important;
+            border: 1px solid #e2e8f0 !important;
+            font-size: 0.92rem !important;
+            color: #0f172a !important;
+        }
+        .custom-data-table tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+        .custom-data-table tr:hover {
+            background-color: #f1f5f9;
+        }
+
         .summary-table {
             width: 100%;
             border-collapse: collapse;
@@ -37,12 +77,12 @@ try:
             box-shadow: 0 1px 3px rgba(0,0,0,0.06);
         }
         .summary-table th {
-            background-color: #f1f5f9;
-            color: #334155;
-            font-weight: 700;
+            background-color: #e2e8f0;
+            color: #000000;
+            font-weight: 800;
             text-align: center;
             padding: 8px;
-            border: 1px solid #e2e8f0;
+            border: 1px solid #cbd5e1;
             font-size: 0.90rem;
         }
         .summary-table td {
@@ -102,6 +142,58 @@ try:
         st.stop()
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
+
+    # --- HTML TABLE BUILDER (STRICT CENTER ALIGNMENT & BOLD BLACK HEADERS) ---
+    def render_centered_html_table(df, format_dict=None):
+        if df.empty:
+            return "<p style='text-align:center; color:#64748b;'>No data available.</p>"
+        
+        display_df = df.copy()
+        if format_dict:
+            for col, fmt in format_dict.items():
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].apply(lambda x: fmt.format(x) if pd.notnull(x) and isinstance(x, (int, float)) else x)
+
+        html = ['<table class="custom-data-table">']
+        
+        # Check for MultiIndex Columns
+        if isinstance(display_df.columns, pd.MultiIndex):
+            levels = display_df.columns.nlevels
+            for lvl in range(levels):
+                html.append('<tr>')
+                if lvl == 0 and display_df.index.name:
+                    html.append(f'<th rowspan="{levels}">{display_df.index.name}</th>')
+                elif lvl > 0 and display_df.index.name:
+                    pass
+                for col in display_df.columns.get_level_values(lvl).unique():
+                    # Count spans
+                    span = sum(1 for c in display_df.columns if c[lvl] == col)
+                    html.append(f'<th colspan="{span}">{col}</th>')
+                html.append('</tr>')
+            
+            html.append('<tbody>')
+            for idx, row in display_df.iterrows():
+                html.append('<tr>')
+                html.append(f'<td style="font-weight:700; background-color:#f8fafc;">{idx}</td>')
+                for val in row:
+                    val_str = f"{val:,.2f}" if isinstance(val, (int, float)) and val != 0 else (f"{val}" if val != 0 else "-")
+                    html.append(f'<td>{val_str}</td>')
+                html.append('</tr>')
+            html.append('</tbody></table>')
+        else:
+            # Single Header
+            html.append('<thead><tr>')
+            for col in display_df.columns:
+                html.append(f'<th>{col}</th>')
+            html.append('</tr></thead><tbody>')
+            for _, row in display_df.iterrows():
+                html.append('<tr>')
+                for val in row:
+                    html.append(f'<td>{val}</td>')
+                html.append('</tr>')
+            html.append('</tbody></table>')
+
+        return "".join(html)
 
     # --- EXCEL EXPORT HELPER ---
     def to_excel_bytes(df, sheet_name):
@@ -446,12 +538,7 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not bills_mat.empty:
-                st.dataframe(
-                    bills_mat, 
-                    hide_index=True, 
-                    width="stretch",
-                    column_config={col: st.column_config.Column(alignment="center") for col in bills_mat.columns}
-                )
+                st.markdown(render_centered_html_table(bills_mat), unsafe_allow_html=True)
             else:
                 st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -464,12 +551,7 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not secs_mat.empty:
-                st.dataframe(
-                    secs_mat, 
-                    hide_index=True, 
-                    width="stretch",
-                    column_config={col: st.column_config.Column(alignment="center") for col in secs_mat.columns}
-                )
+                st.markdown(render_centered_html_table(secs_mat), unsafe_allow_html=True)
             else:
                 st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
@@ -481,21 +563,13 @@ try:
         with tab1:
             if not df_latest_bills.empty:
                 disp_b = df_latest_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_bills.columns], errors="ignore")
-                st.dataframe(
-                    disp_b, 
-                    width="stretch",
-                    column_config={col: st.column_config.Column(alignment="center") for col in disp_b.columns}
-                )
+                st.dataframe(disp_b, width="stretch")
             else:
                 st.info("No T-Bill data available.")
         with tab2:
             if not df_latest_secs.empty:
                 disp_s = df_latest_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_secs.columns], errors="ignore")
-                st.dataframe(
-                    disp_s, 
-                    width="stretch",
-                    column_config={col: st.column_config.Column(alignment="center") for col in disp_s.columns}
-                )
+                st.dataframe(disp_s, width="stretch")
             else:
                 st.info("No Securities data available.")
 
@@ -523,43 +597,23 @@ try:
 
             col_lad1, col_lad2 = st.columns(2)
             with col_lad1:
-                st.markdown(f"**Treasury Bills Ladder** *(as of {latest_bill_date})*")
+                st.markdown(f"<div style='text-align:center; font-weight:700; color:#0f172a; margin-bottom:6px;'>Treasury Bills Ladder <span style='font-weight:normal; color:#64748b;'>(as of {latest_bill_date})</span></div>", unsafe_allow_html=True)
                 bill_ladder = compute_maturity_ladder(df_latest_bills, latest_bill_date)
                 if not bill_ladder.empty:
-                    # Centering both headers and cell values explicitly via Styler
-                    styled_bill_ladder = bill_ladder.style.format({
-                        "Outstanding (BDT Cr)": "{:,.2f}"
-                    }).set_table_styles([
-                        {'selector': 'th', 'props': [('text-align', 'center !important')]},
-                        {'selector': 'td', 'props': [('text-align', 'center !important')]}
-                    ]).set_properties(**{'text-align': 'center'})
-
-                    st.dataframe(
-                        styled_bill_ladder, 
-                        width="stretch", 
-                        hide_index=True,
-                        column_config={col: st.column_config.Column(alignment="center") for col in bill_ladder.columns}
+                    st.markdown(
+                        render_centered_html_table(bill_ladder, format_dict={"Outstanding (BDT Cr)": "{:,.2f}"}),
+                        unsafe_allow_html=True
                     )
                 else:
                     st.info("No data available.")
 
             with col_lad2:
-                st.markdown(f"**Bonds & FRTBs Ladder** *(as of {latest_sec_date})*")
+                st.markdown(f"<div style='text-align:center; font-weight:700; color:#0f172a; margin-bottom:6px;'>Bonds & FRTBs Ladder <span style='font-weight:normal; color:#64748b;'>(as of {latest_sec_date})</span></div>", unsafe_allow_html=True)
                 bond_ladder = compute_maturity_ladder(df_latest_secs, latest_sec_date)
                 if not bond_ladder.empty:
-                    # Centering both headers and cell values explicitly via Styler
-                    styled_bond_ladder = bond_ladder.style.format({
-                        "Outstanding (BDT Cr)": "{:,.2f}"
-                    }).set_table_styles([
-                        {'selector': 'th', 'props': [('text-align', 'center !important')]},
-                        {'selector': 'td', 'props': [('text-align', 'center !important')]}
-                    ]).set_properties(**{'text-align': 'center'})
-
-                    st.dataframe(
-                        styled_bond_ladder, 
-                        width="stretch", 
-                        hide_index=True,
-                        column_config={col: st.column_config.Column(alignment="center") for col in bond_ladder.columns}
+                    st.markdown(
+                        render_centered_html_table(bond_ladder, format_dict={"Outstanding (BDT Cr)": "{:,.2f}"}),
+                        unsafe_allow_html=True
                     )
                 else:
                     st.info("No data available.")
@@ -617,77 +671,54 @@ try:
                         combined_monthly = combined_monthly.fillna(0)
                         combined_monthly.sort_index(ascending=False, inplace=True)
                         
-                        # Store raw periods for drilling
                         month_periods = combined_monthly.index.tolist()
                         combined_display = combined_monthly.copy()
                         combined_display.index = combined_display.index.strftime("%b-%y")
                         combined_display.index.name = "Month Year"
 
-                        # Format and Center-Align the MultiIndex Table
-                        styled_combined = combined_display.style.format(
-                            lambda v: f"{v:.4f}%" if isinstance(v, float) and 0 < v < 100 and "." in str(v) else (f"{v:,.2f}" if v != 0 else "-")
-                        ).set_table_styles([
-                            {'selector': 'th', 'props': [('text-align', 'center !important')]},
-                            {'selector': 'th.col_heading', 'props': [('text-align', 'center !important')]},
-                            {'selector': 'td', 'props': [('text-align', 'center !important')]}
-                        ]).set_properties(**{'text-align': 'center'})
-
-                        st.caption("💡 **Select any month in the table below to inspect its individual underlying ISIN breakdown:**")
-                        
-                        selection_event = st.dataframe(
-                            styled_combined,
-                            width="stretch",
-                            on_select="rerun",
-                            selection_mode="single-row",
-                            key="ledger_table_selector"
+                        # Render Full Width Centered HTML Table with Bold Black Headers
+                        st.markdown(
+                            render_centered_html_table(combined_display),
+                            unsafe_allow_html=True
                         )
 
-                        # --- DRILL-DOWN CONTAINER ---
-                        selected_rows = selection_event.selection.rows if selection_event and hasattr(selection_event, "selection") else []
+                        # --- DRILL-DOWN SELECTION CONTROLS ---
+                        st.markdown("---")
+                        st.markdown("#### 🔍 Monthly Instrument Breakdown Drill-Down")
                         
-                        if selected_rows:
-                            selected_idx = selected_rows[0]
-                            selected_period = month_periods[selected_idx]
-                            selected_label = combined_display.index[selected_idx]
+                        c1, c2, c3 = st.columns(3)
+                        with c1:
+                            selected_label = st.selectbox("Select Month", combined_display.index.tolist())
+                        with c2:
+                            inst_choice = st.selectbox("Select Instrument Category", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
+                        with c3:
+                            event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
 
-                            st.markdown(f"### 🔍 Detailed Instrument Ledger — **{selected_label}**")
+                        selected_idx = combined_display.index.tolist().index(selected_label)
+                        selected_period = month_periods[selected_idx]
+                        target_df = df_ana_bills if inst_choice == "Treasury Bills" else (df_ana_frtbs if inst_choice == "FRTBs" else df_ana_bonds)
+                        
+                        details_df = get_monthly_drilldown_details(target_df, selected_period, event_choice, inst_choice)
+
+                        if not details_df.empty:
+                            total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
+                            st.success(f"**{inst_choice}** | **{event_choice}** in **{selected_label}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                             
-                            c1, c2, c3 = st.columns(3)
-                            with c1:
-                                inst_choice = st.selectbox("Select Instrument Category", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
-                            with c2:
-                                event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
-
-                            target_df = df_ana_bills if inst_choice == "Treasury Bills" else (df_ana_frtbs if inst_choice == "FRTBs" else df_ana_bonds)
+                            display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
                             
-                            details_df = get_monthly_drilldown_details(target_df, selected_period, event_choice, inst_choice)
-
-                            if not details_df.empty:
-                                total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
-                                st.success(f"**{inst_choice}** | **{event_choice}** in **{selected_label}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
-                                
-                                display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
-                                
-                                styled_details = details_df[display_cols].style.format({"Event Amount (BDT Cr)": "{:,.2f}"}).set_table_styles([
-                                    {'selector': 'th', 'props': [('text-align', 'center !important')]},
-                                    {'selector': 'td', 'props': [('text-align', 'center !important')]}
-                                ]).set_properties(**{'text-align': 'center'})
-
-                                st.dataframe(
-                                    styled_details, 
-                                    hide_index=True, 
-                                    width="stretch",
-                                    column_config={col: st.column_config.Column(alignment="center") for col in display_cols}
-                                )
-                                
-                                st.download_button(
-                                    f"⬇️ Download {selected_label} {inst_choice} {event_choice} (Excel)",
-                                    data=to_excel_bytes(details_df, f"{selected_label}_{event_choice}"),
-                                    file_name=f"details_{selected_label}_{inst_choice}_{event_choice}.xlsx",
-                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                )
-                            else:
-                                st.info(f"No {inst_choice} recorded as {event_choice} in {selected_label}.")
+                            st.markdown(
+                                render_centered_html_table(details_df[display_cols], format_dict={"Event Amount (BDT Cr)": "{:,.2f}"}),
+                                unsafe_allow_html=True
+                            )
+                            
+                            st.download_button(
+                                f"⬇️ Download {selected_label} {inst_choice} {event_choice} (Excel)",
+                                data=to_excel_bytes(details_df, f"{selected_label}_{event_choice}"),
+                                file_name=f"details_{selected_label}_{inst_choice}_{event_choice}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            )
+                        else:
+                            st.info(f"No {inst_choice} recorded as {event_choice} in {selected_label}.")
                     else:
                         st.info("No records found in this range.")
 
@@ -723,11 +754,7 @@ try:
                     st.subheader(f"Treasury Bills ({hist_start} to {hist_end})")
                     if not df_hist_bills.empty:
                         disp_bills = df_hist_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_hist_bills.columns], errors="ignore")
-                        st.dataframe(
-                            disp_bills, 
-                            width="stretch",
-                            column_config={col: st.column_config.Column(alignment="center") for col in disp_bills.columns}
-                        )
+                        st.dataframe(disp_bills, width="stretch")
                         st.download_button(
                             "⬇️ Download T-Bills (Excel)",
                             data=to_excel_bytes(df_hist_bills, "T-Bills"),
@@ -741,11 +768,7 @@ try:
                     st.subheader(f"Bonds & FRTBs ({hist_start} to {hist_end})")
                     if not df_hist_secs.empty:
                         disp_secs = df_hist_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_hist_secs.columns], errors="ignore")
-                        st.dataframe(
-                            disp_secs, 
-                            width="stretch",
-                            column_config={col: st.column_config.Column(alignment="center") for col in disp_secs.columns}
-                        )
+                        st.dataframe(disp_secs, width="stretch")
                         st.download_button(
                             "⬇️ Download Bonds/FRTBs (Excel)",
                             data=to_excel_bytes(df_hist_secs, "Bonds_FRTB"),
