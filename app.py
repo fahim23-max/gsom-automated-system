@@ -152,7 +152,7 @@ try:
         html = ['<table class="custom-data-table">']
         
         if isinstance(display_df.columns, pd.MultiIndex):
-            # Level 1: Category Header (Treasury Bills, FRTBs, Treasury Bonds)
+            # Level 1: Category Header
             html.append('<thead><tr>')
             html.append('<th rowspan="2" style="vertical-align: middle;">Month Year</th>')
             for top in display_df.columns.get_level_values(0).unique():
@@ -160,7 +160,7 @@ try:
                 html.append(f'<th colspan="{span}">{top}</th>')
             html.append('</tr>')
 
-            # Level 2: Sub-headers (Newly Issued, New WA Yield, Reissued, Reissue WA Yield, Settled)
+            # Level 2: Sub-headers
             html.append('<tr>')
             for col in display_df.columns:
                 html.append(f'<th>{col[1]}</th>')
@@ -359,7 +359,7 @@ try:
         ladder.columns = ["Time Bucket", "Active ISINs", "Outstanding (BDT Cr)"]
         return ladder
 
-    # --- MONTHLY LEDGER COMPUTATION (SEPARATE NEW & REISSUE WA YIELDS) ---
+    # --- MONTHLY LEDGER COMPUTATION (WITH HISTORICAL MATURITY DETECTION) ---
     def calculate_monthly_metrics(df, start_d=None, end_d=None):
         cols = ["Newly Issued", "New WA Yield", "Reissued", "Reissue WA Yield", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
@@ -408,15 +408,18 @@ try:
         reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
         reissue_wa_yield = (reissued_yield_vol / reissued).fillna(0).rename("Reissue WA Yield")
 
-        # 3. SETTLED
+        # 3. SETTLED / MATURED (Checked across peak outstanding balance prior to expiry)
         max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
-        last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
-        last_records = last_records.merge(max_amt_per_isin, on="ISIN")
+        unique_isins = temp_df.drop_duplicates(subset=["ISIN"], keep="last")[["ISIN", "Mat_Dt"]].merge(max_amt_per_isin, on="ISIN")
         
-        past_maturities = last_records.dropna(subset=["Mat_Dt"]).copy()
-        past_maturities = past_maturities[(past_maturities["Mat_Dt"] >= min_date) & (past_maturities["Mat_Dt"] <= max_date)]
-        past_maturities["Month"] = past_maturities["Mat_Dt"].dt.to_period("M")
-        settled = past_maturities.groupby("Month")["Max_Amt"].sum().rename("Settled")
+        settled_mask = (unique_isins["Mat_Dt"] >= min_date) & (unique_isins["Mat_Dt"] <= max_date)
+        settled_records = unique_isins[settled_mask].copy()
+
+        if not settled_records.empty:
+            settled_records["Month"] = settled_records["Mat_Dt"].dt.to_period("M")
+            settled = settled_records.groupby("Month")["Max_Amt"].sum().rename("Settled")
+        else:
+            settled = pd.Series(dtype=float, name="Settled")
 
         monthly = pd.concat([newly_issued, new_wa_yield, reissued, reissue_wa_yield, settled], axis=1).fillna(0)
         
@@ -426,11 +429,12 @@ try:
                 
         start_p = min_date.to_period("M")
         end_p = max_date.to_period("M")
-        monthly = monthly[(monthly.index >= start_p) & (monthly.index <= end_p)]
+        all_months = pd.period_range(start=start_p, end=end_p, freq="M")
+        monthly = monthly.reindex(all_months, fill_value=0.0)
         
         return monthly[cols]
 
-    # --- DRILL-DOWN INSTRUMENT EXTRACTOR (WITH COUPON AND REMAINING MATURITY) ---
+    # --- DRILL-DOWN INSTRUMENT EXTRACTOR ---
     def get_monthly_drilldown_details(df, selected_month_period, event_type, instrument_label):
         if df.empty or "ISIN" not in df.columns:
             return pd.DataFrame()
@@ -450,7 +454,6 @@ try:
         
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
 
-        # Identify Coupon Column dynamically
         coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
         rem_mat_col = next((c for c in temp_df.columns if "remaining" in c.lower()), "Remaining Maturity")
 
@@ -486,7 +489,6 @@ try:
                 match["Category"] = "Maturity / Settlement"
 
         if not match.empty:
-            # Ensure standard naming for Coupon Rate and Remaining Maturity
             if coupon_col and coupon_col in match.columns:
                 match["Coupon Rate"] = match[coupon_col]
             else:
@@ -762,7 +764,6 @@ try:
                                     total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
                                     st.success(f"**{d_inst}** | **{d_event}** in **{d_month}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                                     
-                                    # Explicit column sequence including Coupon Rate and Remaining Maturity
                                     preferred_cols = [
                                         "ISIN", "Securities Name", "Category", "Event Date", 
                                         "Event Amount (BDT Cr)", "Market Yield", "Coupon Rate", 
@@ -783,7 +784,7 @@ try:
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     )
                                 else:
-                                    st.info(f"No {d_inst} recorded as {d_event} in {d_month}.")
+                                    st.info(f"No {d_inst} recorded as {event_choice} in {d_month}.")
                     else:
                         st.info("No records found in this range.")
 
