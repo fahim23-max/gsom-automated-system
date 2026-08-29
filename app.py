@@ -311,7 +311,7 @@ try:
             """
         st.markdown(header_html + table_html, unsafe_allow_html=True)
 
-    # --- MATURITY DETAILS LOGIC (COUPON EXCLUDED FOR BILLS, INCLUDED FOR BONDS) ---
+    # --- MATURITY DETAILS LOGIC ---
     def compute_maturity_detail(df, base_date_str, days=30, is_bond=False):
         if df.empty or "Maturity/ Expiry Date" not in df.columns or not base_date_str:
             return pd.DataFrame(), 0.0, 0
@@ -356,8 +356,6 @@ try:
             ]
 
         display_df = maturing[[c for c in preferred_cols if c in maturing.columns]].copy()
-        display_df.insert(0, "Sl. No.", range(1, len(display_df) + 1))
-
         return display_df, float(maturing["Outstanding (BDT Cr)"].sum()), int(maturing["ISIN"].nunique())
 
     # --- MATURITY LADDERING (ANALYTICS) ---
@@ -580,7 +578,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Maturity Snapshot (30 Days) - Clean Side-by-Side Cards (No Coupon for Bills, Coupon for Bonds)
+        # Maturity Snapshot (30 Days)
         st.markdown("#### ⏰ Upcoming Maturity Snapshot (Next 30 Days)")
         bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30, is_bond=False)
         secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30, is_bond=True)
@@ -614,19 +612,61 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Active Holdings Raw View
+        # Active Holdings Raw View - Data_Date Retained, Remaining Maturity Untouched, Outstanding in BDT Cr, Category Dropped for Bills
         st.markdown("#### 📑 AVAILABLE SECURITIES IN THE MARKET")
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
+        
+        cols_to_strip_bills = ["id", "ID", "Id", "created_at", "Category", "Sl. No.", "sl. no.", "sl_no", "sl no"]
+        cols_to_strip_bonds = ["id", "ID", "Id", "created_at", "Sl. No.", "sl. no.", "sl_no", "sl no"]
+        
         with tab1:
             if not df_latest_bills.empty:
-                disp_b = df_latest_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_bills.columns], errors="ignore")
-                st.dataframe(disp_b, width="stretch")
+                disp_b = df_latest_bills.drop(columns=[c for c in cols_to_strip_bills if c in df_latest_bills.columns], errors="ignore").copy()
+                
+                # Convert Outstanding Amount to BDT Crore
+                if "Outstanding BDT (in Mill)" in disp_b.columns:
+                    disp_b["Outstanding (BDT Cr)"] = pd.to_numeric(
+                        disp_b["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+                    ).fillna(0) / 10.0
+                    disp_b = disp_b.drop(columns=["Outstanding BDT (in Mill)"])
+
+                st.dataframe(
+                    disp_b.style.format({
+                        "Outstanding (BDT Cr)": "{:,.2f}",
+                        "Issue Price": "{:,.4f}",
+                        "Market Price": "{:,.4f}",
+                        "Market Yield": "{:,.4f}%",
+                        "Remaining Maturity": "{:,.4f}"
+                    }),
+                    hide_index=True,
+                    width="stretch"
+                )
             else:
                 st.info("No T-Bill data available.")
+                
         with tab2:
             if not df_latest_secs.empty:
-                disp_s = df_latest_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_secs.columns], errors="ignore")
-                st.dataframe(disp_s, width="stretch")
+                disp_s = df_latest_secs.drop(columns=[c for c in cols_to_strip_bonds if c in df_latest_secs.columns], errors="ignore").copy()
+                
+                # Convert Outstanding Amount to BDT Crore
+                if "Outstanding BDT (in Mill)" in disp_s.columns:
+                    disp_s["Outstanding (BDT Cr)"] = pd.to_numeric(
+                        disp_s["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+                    ).fillna(0) / 10.0
+                    disp_s = disp_s.drop(columns=["Outstanding BDT (in Mill)"])
+
+                st.dataframe(
+                    disp_s.style.format({
+                        "Outstanding (BDT Cr)": "{:,.2f}",
+                        "Issue Price": "{:,.4f}",
+                        "Market Price": "{:,.4f}",
+                        "Market Yield": "{:,.4f}%",
+                        "Coupon Rate": "{:,.2f}%",
+                        "Remaining Maturity": "{:,.4f}"
+                    }),
+                    hide_index=True,
+                    width="stretch"
+                )
             else:
                 st.info("No Securities data available.")
 
@@ -803,7 +843,7 @@ try:
                                     else:
                                         preferred_cols = [
                                             "ISIN", "Securities Name", "Category", "Event Date", 
-                                            "Event Amount (BDT Cr)", "Market Yield", "Coupon Rate", 
+                                            "Event Amount (BDT Cr)", "Market Yield", 
                                             "Remaining Maturity", "Issue Date", "Maturity/ Expiry Date", 
                                             "Outstanding BDT (in Mill)"
                                         ]
