@@ -551,14 +551,14 @@ try:
         st.caption(f"**Latest Bond Date:** {latest_sec_date or 'N/A'}")
 
 
-    # ==========================================
+	# ==========================================
     # --- 1. LATEST MARKET SUMMARY (DEFAULT) ---
     # ==========================================
     if menu_selection == "📊 Latest Market Summary":
         st.markdown(f"""
-            <div style="margin-bottom: 1.25rem;">
-                <h2 style="margin-bottom: 0;">🏛️ GSOM Daily</h2>
-                <p style="color:#64748b; font-size:1rem; margin-top:0.25rem;">
+            <div style="margin-bottom: 1.5rem; text-align: center;">
+                <h2 style="margin-bottom: 0; text-align: center;">🏛️ GSOM Daily</h2>
+                <p style="color:#64748b; font-size:1.05rem; margin-top:0.35rem; text-align: center;">
                     Treasury Bills, FRTBs, and Treasury Bonds
                 </p>
             </div>
