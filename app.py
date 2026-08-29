@@ -446,7 +446,12 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not bills_mat.empty:
-                st.dataframe(bills_mat, hide_index=True, width="stretch")
+                st.dataframe(
+                    bills_mat, 
+                    hide_index=True, 
+                    width="stretch",
+                    column_config={col: st.column_config.Column(alignment="center") for col in bills_mat.columns}
+                )
             else:
                 st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -459,7 +464,12 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not secs_mat.empty:
-                st.dataframe(secs_mat, hide_index=True, width="stretch")
+                st.dataframe(
+                    secs_mat, 
+                    hide_index=True, 
+                    width="stretch",
+                    column_config={col: st.column_config.Column(alignment="center") for col in secs_mat.columns}
+                )
             else:
                 st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
@@ -470,12 +480,22 @@ try:
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
         with tab1:
             if not df_latest_bills.empty:
-                st.dataframe(df_latest_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_bills.columns], errors="ignore"), width="stretch")
+                disp_b = df_latest_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_bills.columns], errors="ignore")
+                st.dataframe(
+                    disp_b, 
+                    width="stretch",
+                    column_config={col: st.column_config.Column(alignment="center") for col in disp_b.columns}
+                )
             else:
                 st.info("No T-Bill data available.")
         with tab2:
             if not df_latest_secs.empty:
-                st.dataframe(df_latest_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_secs.columns], errors="ignore"), width="stretch")
+                disp_s = df_latest_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_latest_secs.columns], errors="ignore")
+                st.dataframe(
+                    disp_s, 
+                    width="stretch",
+                    column_config={col: st.column_config.Column(alignment="center") for col in disp_s.columns}
+                )
             else:
                 st.info("No Securities data available.")
 
@@ -506,7 +526,20 @@ try:
                 st.markdown(f"**Treasury Bills Ladder** *(as of {latest_bill_date})*")
                 bill_ladder = compute_maturity_ladder(df_latest_bills, latest_bill_date)
                 if not bill_ladder.empty:
-                    st.dataframe(bill_ladder.style.format({"Outstanding (BDT Cr)": "{:,.2f}"}), width="stretch", hide_index=True)
+                    # Centering both headers and cell values explicitly via Styler
+                    styled_bill_ladder = bill_ladder.style.format({
+                        "Outstanding (BDT Cr)": "{:,.2f}"
+                    }).set_table_styles([
+                        {'selector': 'th', 'props': [('text-align', 'center !important')]},
+                        {'selector': 'td', 'props': [('text-align', 'center !important')]}
+                    ]).set_properties(**{'text-align': 'center'})
+
+                    st.dataframe(
+                        styled_bill_ladder, 
+                        width="stretch", 
+                        hide_index=True,
+                        column_config={col: st.column_config.Column(alignment="center") for col in bill_ladder.columns}
+                    )
                 else:
                     st.info("No data available.")
 
@@ -514,7 +547,20 @@ try:
                 st.markdown(f"**Bonds & FRTBs Ladder** *(as of {latest_sec_date})*")
                 bond_ladder = compute_maturity_ladder(df_latest_secs, latest_sec_date)
                 if not bond_ladder.empty:
-                    st.dataframe(bond_ladder.style.format({"Outstanding (BDT Cr)": "{:,.2f}"}), width="stretch", hide_index=True)
+                    # Centering both headers and cell values explicitly via Styler
+                    styled_bond_ladder = bond_ladder.style.format({
+                        "Outstanding (BDT Cr)": "{:,.2f}"
+                    }).set_table_styles([
+                        {'selector': 'th', 'props': [('text-align', 'center !important')]},
+                        {'selector': 'td', 'props': [('text-align', 'center !important')]}
+                    ]).set_properties(**{'text-align': 'center'})
+
+                    st.dataframe(
+                        styled_bond_ladder, 
+                        width="stretch", 
+                        hide_index=True,
+                        column_config={col: st.column_config.Column(alignment="center") for col in bond_ladder.columns}
+                    )
                 else:
                     st.info("No data available.")
 
@@ -577,13 +623,19 @@ try:
                         combined_display.index = combined_display.index.strftime("%b-%y")
                         combined_display.index.name = "Month Year"
 
-                        # Display MultiIndex Dataframe with Native Row Selection Event
+                        # Format and Center-Align the MultiIndex Table
+                        styled_combined = combined_display.style.format(
+                            lambda v: f"{v:.4f}%" if isinstance(v, float) and 0 < v < 100 and "." in str(v) else (f"{v:,.2f}" if v != 0 else "-")
+                        ).set_table_styles([
+                            {'selector': 'th', 'props': [('text-align', 'center !important')]},
+                            {'selector': 'th.col_heading', 'props': [('text-align', 'center !important')]},
+                            {'selector': 'td', 'props': [('text-align', 'center !important')]}
+                        ]).set_properties(**{'text-align': 'center'})
+
                         st.caption("💡 **Select any month in the table below to inspect its individual underlying ISIN breakdown:**")
                         
                         selection_event = st.dataframe(
-                            combined_display.style.format(
-                                lambda v: f"{v:.4f}%" if isinstance(v, float) and 0 < v < 100 and "." in str(v) else (f"{v:,.2f}" if v != 0 else "-")
-                            ),
+                            styled_combined,
                             width="stretch",
                             on_select="rerun",
                             selection_mode="single-row",
@@ -615,7 +667,18 @@ try:
                                 st.success(f"**{inst_choice}** | **{event_choice}** in **{selected_label}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                                 
                                 display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
-                                st.dataframe(details_df[display_cols].style.format({"Event Amount (BDT Cr)": "{:,.2f}"}), hide_index=True, width="stretch")
+                                
+                                styled_details = details_df[display_cols].style.format({"Event Amount (BDT Cr)": "{:,.2f}"}).set_table_styles([
+                                    {'selector': 'th', 'props': [('text-align', 'center !important')]},
+                                    {'selector': 'td', 'props': [('text-align', 'center !important')]}
+                                ]).set_properties(**{'text-align': 'center'})
+
+                                st.dataframe(
+                                    styled_details, 
+                                    hide_index=True, 
+                                    width="stretch",
+                                    column_config={col: st.column_config.Column(alignment="center") for col in display_cols}
+                                )
                                 
                                 st.download_button(
                                     f"⬇️ Download {selected_label} {inst_choice} {event_choice} (Excel)",
@@ -660,7 +723,11 @@ try:
                     st.subheader(f"Treasury Bills ({hist_start} to {hist_end})")
                     if not df_hist_bills.empty:
                         disp_bills = df_hist_bills.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_hist_bills.columns], errors="ignore")
-                        st.dataframe(disp_bills, width="stretch")
+                        st.dataframe(
+                            disp_bills, 
+                            width="stretch",
+                            column_config={col: st.column_config.Column(alignment="center") for col in disp_bills.columns}
+                        )
                         st.download_button(
                             "⬇️ Download T-Bills (Excel)",
                             data=to_excel_bytes(df_hist_bills, "T-Bills"),
@@ -674,7 +741,11 @@ try:
                     st.subheader(f"Bonds & FRTBs ({hist_start} to {hist_end})")
                     if not df_hist_secs.empty:
                         disp_secs = df_hist_secs.drop(columns=[c for c in ["id", "ID", "Id"] if c in df_hist_secs.columns], errors="ignore")
-                        st.dataframe(disp_secs, width="stretch")
+                        st.dataframe(
+                            disp_secs, 
+                            width="stretch",
+                            column_config={col: st.column_config.Column(alignment="center") for col in disp_secs.columns}
+                        )
                         st.download_button(
                             "⬇️ Download Bonds/FRTBs (Excel)",
                             data=to_excel_bytes(df_hist_secs, "Bonds_FRTB"),
