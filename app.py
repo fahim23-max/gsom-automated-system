@@ -26,18 +26,25 @@ try:
             padding-bottom: 2.5rem;
         }
         
-        /* Universal Styled Data Table (Center Aligned, Bold & Black Headers) */
+        /* Isolated Scrollable Container for Side-by-Side Tables */
+        .table-container-card {
+            background-color: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 10px;
+            padding: 8px 10px 14px 10px;
+            margin-top: 8px;
+            margin-bottom: 14px;
+            overflow-x: auto;
+            max-width: 100%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+        }
+
+        /* Universal Styled Data Table */
         .custom-data-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 8px;
-            margin-bottom: 14px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: #ffffff;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-            border: 1px solid #cbd5e1;
         }
         .custom-data-table th {
             background-color: #e2e8f0 !important;
@@ -45,18 +52,20 @@ try:
             font-weight: 800 !important;
             text-align: center !important;
             vertical-align: middle !important;
-            padding: 8px 6px !important;
+            padding: 8px 10px !important;
             border: 1px solid #cbd5e1 !important;
-            font-size: 0.82rem !important;
+            font-size: 0.80rem !important;
             letter-spacing: 0.02em;
+            white-space: nowrap !important;
         }
         .custom-data-table td {
             text-align: center !important;
             vertical-align: middle !important;
-            padding: 8px 6px !important;
+            padding: 7px 10px !important;
             border: 1px solid #e2e8f0 !important;
-            font-size: 0.86rem !important;
+            font-size: 0.84rem !important;
             color: #0f172a !important;
+            white-space: nowrap !important;
         }
         .custom-data-table tr:nth-child(even) {
             background-color: #f8fafc;
@@ -104,7 +113,7 @@ try:
             padding: 20px !important;
             text-align: center !important;
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03) !important;
-            margin-bottom: 15px !important;
+            margin-bottom: 12px !important;
         }
         .custom-metric-card.bill-card { border-top-color: #dc2626 !important; }
         .custom-metric-card.bond-card { border-top-color: #2563eb !important; }
@@ -143,13 +152,13 @@ try:
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-    # --- HTML TABLE BUILDER (2-TIER MULTIINDEX WITH SEPARATE YIELDS) ---
+    # --- HTML TABLE BUILDER (WRAPPED IN SCROLLABLE BOX) ---
     def render_centered_html_table(df, format_dict=None):
         if df.empty:
-            return "<p style='text-align:center; color:#64748b;'>No data available.</p>"
+            return "<p style='text-align:center; color:#64748b; margin-top:8px;'>No data available.</p>"
         
         display_df = df.copy()
-        html = ['<table class="custom-data-table">']
+        html = ['<div class="table-container-card"><table class="custom-data-table">']
         
         if isinstance(display_df.columns, pd.MultiIndex):
             # Level 1: Category Header
@@ -177,8 +186,9 @@ try:
                         val_str = f"{val:,.2f}" if pd.notnull(val) and val != 0 else "-"
                     html.append(f'<td>{val_str}</td>')
                 html.append('</tr>')
-            html.append('</tbody></table>')
+            html.append('</tbody></table></div>')
         else:
+            # Single Header
             html.append('<thead><tr>')
             for col in display_df.columns:
                 html.append(f'<th>{col}</th>')
@@ -192,7 +202,7 @@ try:
                         val_str = f"{val:,.2f}" if isinstance(val, (int, float)) and val != 0 else str(val)
                     html.append(f'<td>{val_str}</td>')
                 html.append('</tr>')
-            html.append('</tbody></table>')
+            html.append('</tbody></table></div>')
 
         return "".join(html)
 
@@ -262,7 +272,7 @@ try:
 
         coupon_str = "N/A"
         if include_coupon:
-            coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower()), None)
+            coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
             if coupon_col:
                 temp_df["Coupon_Val"] = pd.to_numeric(
                     temp_df[coupon_col].astype(str).str.replace("%", "", regex=False).str.strip(), errors="coerce"
@@ -408,7 +418,7 @@ try:
         reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
         reissue_wa_yield = (reissued_yield_vol / reissued).fillna(0).rename("Reissue WA Yield")
 
-        # 3. SETTLED / MATURED (Checked across peak outstanding balance prior to expiry)
+        # 3. SETTLED / MATURED
         max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
         unique_isins = temp_df.drop_duplicates(subset=["ISIN"], keep="last")[["ISIN", "Mat_Dt"]].merge(max_amt_per_isin, on="ISIN")
         
@@ -551,7 +561,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Maturity Snapshot (30 Days)
+        # Maturity Snapshot (30 Days) - Clean Side-by-Side Cards
         st.markdown("#### ⏰ Upcoming Maturity Snapshot (Next 30 Days)")
         bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30)
         secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30)
@@ -722,13 +732,13 @@ try:
                         combined_display.index = combined_display.index.strftime("%b-%y")
                         combined_display.index.name = "Month Year"
 
-                        # 1. Render Clean Multi-Tier HTML Table
+                        # 1. Render Multi-Tier HTML Table
                         st.markdown(
                             render_centered_html_table(combined_display),
                             unsafe_allow_html=True
                         )
 
-                        # 2. Fully Isolated Drill-Down Search Section
+                        # 2. Form-Isolated Drill-Down Section
                         st.markdown("---")
                         st.markdown("#### 🔍 Inspect Underlyings / Instrument Breakdown")
 
@@ -784,7 +794,7 @@ try:
                                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                     )
                                 else:
-                                    st.info(f"No {d_inst} recorded as {event_choice} in {d_month}.")
+                                    st.info(f"No {d_inst} recorded as {d_event} in {d_month}.")
                     else:
                         st.info("No records found in this range.")
 
