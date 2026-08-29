@@ -557,9 +557,9 @@ try:
     if menu_selection == "📊 Latest Market Summary":
         st.markdown(f"""
             <div style="margin-bottom: 1.25rem;">
-                <h2 style="margin-bottom: 0;">🏛️ Market Snapshot (Latest Available Data)</h2>
+                <h2 style="margin-bottom: 0;">🏛️ GSOM Daily</h2>
                 <p style="color:#64748b; font-size:1rem; margin-top:0.25rem;">
-                    Instant positioning across Treasury Bills, FRTBs, and Treasury Bonds.
+                    Treasury Bills, FRTBs, and Treasury Bonds
                 </p>
             </div>
         """, unsafe_allow_html=True)
