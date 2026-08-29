@@ -326,21 +326,17 @@ try:
         if maturing.empty:
             return maturing, 0.0, 0
 
-        # Standardize Outstanding to Crore
         maturing["Outstanding (BDT Cr)"] = pd.to_numeric(
             maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
 
-        # Sort by chronological maturity date
         maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], format="mixed", errors="coerce")
         maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
         
-        # Standardize Market Yield display
         if "Market Yield" in maturing.columns:
             maturing["Market Yield"] = maturing["Market Yield"].astype(str).apply(lambda x: x if "%" in x else (f"{float(x):.2f}%" if x.replace(".", "", 1).isdigit() else x))
 
         if is_bond:
-            # Identify Coupon Column dynamically for Bonds
             coupon_col = next((c for c in maturing.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
             if coupon_col and coupon_col in maturing.columns:
                 maturing["Coupon Rate"] = maturing[coupon_col].astype(str).apply(lambda x: x if "%" in x else (f"{float(x):.2f}%" if x.replace(".", "", 1).isdigit() else x))
@@ -353,7 +349,6 @@ try:
                 "Outstanding (BDT Cr)"
             ]
         else:
-            # For T-Bills: Explicitly do not include Coupon
             preferred_cols = [
                 "ISIN", "Securities Name", "Issue Date", 
                 "Maturity/ Expiry Date", "Market Yield", 
@@ -551,7 +546,7 @@ try:
         st.caption(f"**Latest Bond Date:** {latest_sec_date or 'N/A'}")
 
 
-	# ==========================================
+    # ==========================================
     # --- 1. LATEST MARKET SUMMARY (DEFAULT) ---
     # ==========================================
     if menu_selection == "📊 Latest Market Summary":
@@ -798,7 +793,6 @@ try:
                                     total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
                                     st.success(f"**{d_inst}** | **{d_event}** in **{d_month}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                                     
-                                    # Adapt column sequence dynamically based on instrument type
                                     if d_inst == "Treasury Bills":
                                         preferred_cols = [
                                             "ISIN", "Securities Name", "Category", "Event Date", 
