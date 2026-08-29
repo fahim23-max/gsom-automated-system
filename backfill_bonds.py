@@ -1,5 +1,7 @@
 import os
 import time
+import threading
+import concurrent.futures
 from datetime import datetime, timedelta
 import requests
 from requests.adapters import HTTPAdapter
@@ -16,11 +18,12 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL secret is missing!")
 
+# Database connection pool scaled for 6+ worker threads
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
-    pool_size=5,
-    max_overflow=2,
+    pool_size=12,
+    max_overflow=6,
 )
 
 UPSERT_SQL = text("""
@@ -41,24 +44,29 @@ UPSERT_SQL = text("""
         "Category" = EXCLUDED."Category";
 """)
 
+thread_local = threading.local()
+
+def get_session():
+    """Provides a thread-isolated Session object with robust connection retries."""
+    if not hasattr(thread_local, "session"):
+        session = requests.Session()
+        retry_strategy = Retry(
+            total=5,
+            backoff_factor=1.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["POST", "GET"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        thread_local.session = session
+    return thread_local.session
+
 def get_existing_dates():
-    """Queries DB so we don't re-scrape dates that are already populated (e.g. August)."""
+    """Queries the database to skip dates that already exist."""
     with engine.connect() as conn:
         res = conn.execute(text('SELECT DISTINCT "Data_Date"::TEXT FROM public.daily_securities'))
         return set(row[0] for row in res.fetchall())
-
-def create_session():
-    session = requests.Session()
-    retry_strategy = Retry(
-        total=5,
-        backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["POST", "GET"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
 
 def upsert_records(records):
     if not records:
@@ -104,36 +112,37 @@ def parse_table(html_text, date_str, category_name):
         })
     return records
 
-def scrape_date_all_securities(session, date_str):
+def scrape_date_worker(date_str):
+    session = get_session()
     picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
     payload = {"picker_date": picker_value, "submit": "Submit"}
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     }
 
     all_records = []
     for cat_name, url in ENDPOINTS.items():
         headers["Referer"] = url
         try:
-            resp = session.post(url, data=payload, headers=headers, timeout=25)
+            time.sleep(0.1)  # Micro-throttle per thread to prevent socket saturation
+            resp = session.post(url, data=payload, headers=headers, timeout=30)
             if resp.status_code == 200:
                 recs = parse_table(resp.text, date_str, cat_name)
                 all_records.extend(recs)
         except Exception as e:
-            print(f"Error on {date_str} ({cat_name}): {e}", flush=True)
+            print(f"[ERROR] {date_str} ({cat_name}): {e}", flush=True)
 
     if all_records:
         upsert_records(all_records)
-        return len(all_records)
-    return 0
+        return date_str, len(all_records)
+    return date_str, 0
 
 def main():
     start_date = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
     end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
 
-    # Retrieve existing dates from DB to skip them
     existing_dates = get_existing_dates()
-    print(f"Found {len(existing_dates)} existing dates in database. Skipping duplicate requests...", flush=True)
+    print(f"Found {len(existing_dates)} existing Bond dates in DB. Skipping duplicate requests...", flush=True)
 
     dates = []
     curr = start_date
@@ -146,25 +155,27 @@ def main():
     dates.reverse()
 
     if not dates:
-        print("All dates in range are already stored in the database. Nothing to scrape.", flush=True)
+        print("All Bond dates in range are already stored in the database.", flush=True)
         return
 
-    print(f"Starting ingestion for {len(dates)} missing dates (BGTB + FRTB)...", flush=True)
+    NUM_WORKERS = 6
+    print(f"Starting ingestion for {len(dates)} dates using {NUM_WORKERS} concurrent workers...", flush=True)
 
-    session = create_session()
     total_rows = 0
+    completed = 0
 
-    for idx, d_str in enumerate(dates, 1):
-        row_count = scrape_date_all_securities(session, d_str)
-        if row_count > 0:
-            total_rows += row_count
-            print(f"[{idx}/{len(dates)}] [OK] {d_str} -> +{row_count} records (BGTB + FRTB)", flush=True)
-        else:
-            print(f"[{idx}/{len(dates)}] [SKIP/EMPTY] {d_str}", flush=True)
-        time.sleep(0.2)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
+        futures = {executor.submit(scrape_date_worker, d): d for d in dates}
+        for future in concurrent.futures.as_completed(futures):
+            completed += 1
+            d_str, row_count = future.result()
+            if row_count > 0:
+                total_rows += row_count
+                print(f"[{completed}/{len(dates)}] [OK] {d_str} -> +{row_count} records (BGTB + FRTB)", flush=True)
+            else:
+                print(f"[{completed}/{len(dates)}] [SKIP/EMPTY] {d_str}", flush=True)
 
-    session.close()
-    print(f"\nFINISHED! Synced a total of {total_rows} new records.", flush=True)
+    print(f"\nFINISHED! Synced a total of {total_rows} records.", flush=True)
 
 if __name__ == "__main__":
     main()
