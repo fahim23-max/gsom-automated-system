@@ -149,7 +149,6 @@ try:
             return "<p style='text-align:center; color:#64748b;'>No data available.</p>"
         
         display_df = df.copy()
-
         html = ['<table class="custom-data-table">']
         
         if isinstance(display_df.columns, pd.MultiIndex):
@@ -526,7 +525,6 @@ try:
             df_latest_frtbs = pd.DataFrame()
             df_latest_bonds = pd.DataFrame()
 
-        # Three-Column Market Summary
         sum_col1, sum_col2, sum_col3 = st.columns(3)
         with sum_col1:
             render_summary_block(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
@@ -632,7 +630,7 @@ try:
                 else:
                     st.info("No data available.")
 
-        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER (INTERACTIVE DRILL-DOWN)
+        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER (FORM-ISOLATED SEARCH)
         with ana_tab2:
             st.markdown("#### 📅 Monthly Issuance, Reissuance & Settlement Ledger (BDT Cr)")
             with st.form("analytics_range_form"):
@@ -695,7 +693,6 @@ try:
                         empty_idx = pd.MultiIndex.from_product([["Treasury Bonds"], sub_cols])
                         dfs_to_join.append(pd.DataFrame(columns=empty_idx))
 
-                    # Combine all 3 asset blocks side-by-side
                     combined_monthly = dfs_to_join[0]
                     for d in dfs_to_join[1:]:
                         combined_monthly = combined_monthly.join(d, how="outer")
@@ -709,49 +706,63 @@ try:
                         combined_display.index = combined_display.index.strftime("%b-%y")
                         combined_display.index.name = "Month Year"
 
-                        # 1. Render Clean Multi-Tier HTML Table with Bold Black Headers
+                        # 1. Render Clean Multi-Tier HTML Table
                         st.markdown(
                             render_centered_html_table(combined_display),
                             unsafe_allow_html=True
                         )
 
-                        # 2. Interactive Instrument Breakdown Expanders
+                        # 2. Fully Isolated Drill-Down Search Section
                         st.markdown("---")
                         st.markdown("#### 🔍 Inspect Underlyings / Instrument Breakdown")
 
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            selected_label = st.selectbox("Select Month", combined_display.index.tolist())
-                        with c2:
-                            inst_choice = st.selectbox("Select Instrument", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
-                        with c3:
-                            event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
+                        with st.form("drilldown_form"):
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                selected_label = st.selectbox("Select Month", combined_display.index.tolist())
+                            with c2:
+                                inst_choice = st.selectbox("Select Instrument", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
+                            with c3:
+                                event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
+                            
+                            search_drilldown = st.form_submit_button("🔍 Search Breakdown", type="primary")
 
-                        selected_idx = combined_display.index.tolist().index(selected_label)
-                        selected_period = month_periods[selected_idx]
-                        target_df = df_ana_bills if inst_choice == "Treasury Bills" else (df_ana_frtbs if inst_choice == "FRTBs" else df_ana_bonds)
-                        
-                        details_df = get_monthly_drilldown_details(target_df, selected_period, event_choice, inst_choice)
+                        if search_drilldown:
+                            st.session_state["drill_month"] = selected_label
+                            st.session_state["drill_inst"] = inst_choice
+                            st.session_state["drill_event"] = event_choice
 
-                        if not details_df.empty:
-                            total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
-                            st.success(f"**{inst_choice}** | **{event_choice}** in **{selected_label}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
-                            
-                            display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
-                            
-                            st.markdown(
-                                render_centered_html_table(details_df[display_cols], format_dict={"Event Amount (BDT Cr)": "{:,.2f}"}),
-                                unsafe_allow_html=True
-                            )
-                            
-                            st.download_button(
-                                f"⬇️ Download {selected_label} {inst_choice} {event_choice} (Excel)",
-                                data=to_excel_bytes(details_df, f"{selected_label}_{event_choice}"),
-                                file_name=f"details_{selected_label}_{inst_choice}_{event_choice}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            )
-                        else:
-                            st.info(f"No {inst_choice} recorded as {event_choice} in {selected_label}.")
+                        if "drill_month" in st.session_state:
+                            d_month = st.session_state["drill_month"]
+                            d_inst = st.session_state["drill_inst"]
+                            d_event = st.session_state["drill_event"]
+
+                            if d_month in combined_display.index.tolist():
+                                selected_idx = combined_display.index.tolist().index(d_month)
+                                selected_period = month_periods[selected_idx]
+                                target_df = df_ana_bills if d_inst == "Treasury Bills" else (df_ana_frtbs if d_inst == "FRTBs" else df_ana_bonds)
+                                
+                                details_df = get_monthly_drilldown_details(target_df, selected_period, d_event, d_inst)
+
+                                if not details_df.empty:
+                                    total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
+                                    st.success(f"**{d_inst}** | **{d_event}** in **{d_month}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
+                                    
+                                    display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
+                                    
+                                    st.markdown(
+                                        render_centered_html_table(details_df[display_cols], format_dict={"Event Amount (BDT Cr)": "{:,.2f}"}),
+                                        unsafe_allow_html=True
+                                    )
+                                    
+                                    st.download_button(
+                                        f"⬇️ Download {d_month} {d_inst} {d_event} (Excel)",
+                                        data=to_excel_bytes(details_df, f"{d_month}_{d_event}"),
+                                        file_name=f"details_{d_month}_{d_inst}_{d_event}.xlsx",
+                                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    )
+                                else:
+                                    st.info(f"No {d_inst} recorded as {d_event} in {d_month}.")
                     else:
                         st.info("No records found in this range.")
 
