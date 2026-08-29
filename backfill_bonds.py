@@ -115,7 +115,7 @@ async def main():
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
 
-        start_date = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
+        start_date = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
         end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
 
         queue = asyncio.Queue()
