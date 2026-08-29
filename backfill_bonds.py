@@ -1,6 +1,5 @@
 import os
 import time
-import concurrent.futures
 from datetime import datetime, timedelta
 import requests
 from requests.adapters import HTTPAdapter
@@ -17,8 +16,8 @@ if not DATABASE_URL:
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
-    pool_size=10,
-    max_overflow=6,
+    pool_size=5,
+    max_overflow=2,
 )
 
 UPSERT_SQL = text("""
@@ -41,9 +40,9 @@ UPSERT_SQL = text("""
 def create_session():
     session = requests.Session()
     retry_strategy = Retry(
-        total=6,
+        total=5,
         backoff_factor=1,
-        status_forcelist=[429, 500, 502, 503, 504,505],
+        status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["POST", "GET"]
     )
     adapter = HTTPAdapter(max_retries=retry_strategy)
@@ -57,7 +56,7 @@ def upsert_records(records):
     with engine.begin() as conn:
         conn.execute(UPSERT_SQL, records)
 
-def scrape_single_date(date_str):
+def scrape_single_date(session, date_str):
     picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
     payload = {"picker_date": picker_value, "submit": "Submit"}
     headers = {
@@ -65,26 +64,24 @@ def scrape_single_date(date_str):
         "Referer": URL
     }
 
-    session = create_session()
     try:
-        time.sleep(0.2)  # Polite throttle
-        resp = session.post(URL, data=payload, headers=headers, timeout=30)
+        resp = session.post(URL, data=payload, headers=headers, timeout=25)
         if resp.status_code != 200:
-            return date_str, 0
+            return 0
 
         soup = BeautifulSoup(resp.text, 'html.parser')
         table = soup.find("table", {"class": "table"})
         if not table or not table.find("tbody"):
-            return date_str, 0
+            return 0
 
         rows = table.find("tbody").find_all("tr")
         records = []
         for row in rows:
             cols = [c.get_text(strip=True) for c in row.find_all("td")]
-            if len(cols) < 14:
+            if len(cols) < 15:
                 continue
             try:
-                out_val = float(cols[13].replace(",", "").strip())
+                out_val = float(cols[14].replace(",", "").strip())
             except Exception:
                 out_val = 0.0
 
@@ -104,7 +101,7 @@ def scrape_single_date(date_str):
                 "iprice": cols[10],
                 "rem": cols[11],
                 "yield_": cols[12],
-                "price": cols[10],
+                "price": cols[13],
                 "out": out_val,
                 "cat": cat_val,
                 "ddate": date_str,
@@ -112,14 +109,12 @@ def scrape_single_date(date_str):
 
         if records:
             upsert_records(records)
-            return date_str, len(records)
-        return date_str, 0
+            return len(records)
+        return 0
 
     except Exception as e:
         print(f"Error on {date_str}: {e}", flush=True)
-        return date_str, 0
-    finally:
-        session.close()
+        return 0
 
 def main():
     start_date = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
@@ -128,22 +123,25 @@ def main():
     dates = []
     curr = start_date
     while curr <= end_date:
-        if curr.weekday() not in (4, 5):
+        if curr.weekday() not in (4, 5):  # Exclude Friday & Saturday
             dates.append(curr.strftime("%Y-%m-%d"))
         curr += timedelta(days=1)
 
-    print(f"Starting resilient ingestion for {len(dates)} Bond dates with 2 workers...", flush=True)
+    print(f"Starting reliable sequential ingestion for {len(dates)} Bond dates...", flush=True)
 
+    session = create_session()
     total_rows = 0
-    # Keep concurrency low (2 workers) to prevent server timeouts
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {executor.submit(scrape_single_date, d): d for d in dates}
-        for future in concurrent.futures.as_completed(futures):
-            d_str, row_count = future.result()
-            if row_count > 0:
-                total_rows += row_count
-                print(f"[OK] {d_str} -> +{row_count} records", flush=True)
 
+    for idx, d_str in enumerate(dates, 1):
+        row_count = scrape_single_date(session, d_str)
+        if row_count > 0:
+            total_rows += row_count
+            print(f"[{idx}/{len(dates)}] [OK] {d_str} -> +{row_count} records", flush=True)
+        else:
+            print(f"[{idx}/{len(dates)}] [SKIP/EMPTY] {d_str}", flush=True)
+        time.sleep(0.15)  # Safe delay to prevent IP bans
+
+    session.close()
     print(f"\nFINISHED! Synced a total of {total_rows} Bond/FRTB records.", flush=True)
 
 if __name__ == "__main__":
