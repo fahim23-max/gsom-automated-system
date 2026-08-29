@@ -620,7 +620,7 @@ try:
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
         # Active Holdings Raw View
-        st.markdown("#### 📑 Active Holdings Table (Latest Snapshot)")
+        st.markdown("#### 📑 AVAILABLE SECURITIES IN THE MARKET")
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
         with tab1:
             if not df_latest_bills.empty:
