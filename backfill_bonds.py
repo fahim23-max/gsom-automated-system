@@ -5,7 +5,6 @@ import requests
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, text
 
-# Base URL for GSOM Bonds MTM
 URL = "https://gsom.bb.org.bd/index.php/tbond"
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
@@ -21,16 +20,19 @@ engine = create_engine(
 
 UPSERT_SQL = text("""
     INSERT INTO public.daily_securities
-    ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Coupon Rate/ Spread",
-     "Issue Date", "Maturity/ Expiry Date", "Issue Price", "Remaining Maturity",
-     "Market Yield", "Market Price", "Outstanding BDT (in Mill)", "Data_Date")
-    VALUES (:sl, :isin, :name, :stype, :coupon, :issue, :mat, :iprice, :rem, :yield_, :price, :out, :ddate)
+    ("Sl. No.", "ISIN", "Securities Name", "Securities Type", "Issue Date",
+     "Maturity/ Expiry Date", "Coupon Rate", "Coupon Freqency", "Last Coupon Date",
+     "Next Coupon Date", "Issue Price", "Remaining Maturity", "Market Yield",
+     "Market Price", "Outstanding BDT (in Mill)", "Category", "Data_Date")
+    VALUES (:sl, :isin, :name, :stype, :issue, :mat, :coupon, :freq, :last_c, :next_c,
+            :iprice, :rem, :yield_, :price, :out, :cat, :ddate)
     ON CONFLICT ("ISIN", "Data_Date") DO UPDATE SET
         "Market Yield" = EXCLUDED."Market Yield",
         "Market Price" = EXCLUDED."Market Price",
         "Outstanding BDT (in Mill)" = EXCLUDED."Outstanding BDT (in Mill)",
         "Remaining Maturity" = EXCLUDED."Remaining Maturity",
-        "Coupon Rate/ Spread" = EXCLUDED."Coupon Rate/ Spread";
+        "Coupon Rate" = EXCLUDED."Coupon Rate",
+        "Next Coupon Date" = EXCLUDED."Next Coupon Date";
 """)
 
 def upsert_records(records):
@@ -40,7 +42,6 @@ def upsert_records(records):
         conn.execute(UPSERT_SQL, records)
 
 def scrape_single_date(date_str):
-    """Submits the direct HTTP POST payload that PHP expects."""
     picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
     
     payload = {
@@ -53,7 +54,7 @@ def scrape_single_date(date_str):
     }
 
     try:
-        resp = requests.post(URL, data=payload, headers=headers, timeout=12)
+        resp = requests.post(URL, data=payload, headers=headers, timeout=15)
         if resp.status_code != 200:
             return date_str, 0
 
@@ -66,17 +67,33 @@ def scrape_single_date(date_str):
         records = []
         for row in rows:
             cols = [c.get_text(strip=True) for c in row.find_all("td")]
-            if len(cols) < 12:
+            if len(cols) < 14:
                 continue
             try:
-                out_val = float(cols[11].replace(",", "").strip())
+                out_val = float(cols[13].replace(",", "").strip())
             except Exception:
                 out_val = 0.0
 
+            cat_val = "FRTB" if "FRTB" in cols[2].upper() or "FRTB" in cols[3].upper() else "BGTB"
+
             records.append({
-                "sl": cols[0], "isin": cols[1], "name": cols[2], "stype": cols[3],
-                "coupon": cols[4], "issue": cols[5], "mat": cols[6], "iprice": cols[7],
-                "rem": cols[8], "yield_": cols[9], "price": cols[10], "out": out_val, "ddate": date_str,
+                "sl": cols[0],
+                "isin": cols[1],
+                "name": cols[2],
+                "stype": cols[3],
+                "issue": cols[4],
+                "mat": cols[5],
+                "coupon": cols[6],
+                "freq": cols[7],
+                "last_c": cols[8],
+                "next_c": cols[9],
+                "iprice": cols[10],
+                "rem": cols[11],
+                "yield_": cols[12],
+                "price": cols[10],
+                "out": out_val,
+                "cat": cat_val,
+                "ddate": date_str,
             })
 
         if records:
@@ -95,14 +112,13 @@ def main():
     dates = []
     curr = start_date
     while curr <= end_date:
-        if curr.weekday() not in (4, 5):  # Exclude Friday & Saturday
+        if curr.weekday() not in (4, 5):
             dates.append(curr.strftime("%Y-%m-%d"))
         curr += timedelta(days=1)
 
-    print(f"Starting ultra-fast HTTP ingestion for {len(dates)} dates...", flush=True)
+    print(f"Starting ingestion for {len(dates)} Bond dates...", flush=True)
 
     total_rows = 0
-    # Use ThreadPoolExecutor for lightweight, non-blocking requests
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(scrape_single_date, d): d for d in dates}
         for future in concurrent.futures.as_completed(futures):
