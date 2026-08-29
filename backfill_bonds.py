@@ -139,7 +139,7 @@ def scrape_date_worker(date_str):
 
 def main():
     start_date = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
-    end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
+    end_date = datetime.strptime("2026-05-18", "%Y-%m-%d").date()
 
     existing_dates = get_existing_dates()
     print(f"Found {len(existing_dates)} existing Bond dates in DB. Skipping duplicate requests...", flush=True)
