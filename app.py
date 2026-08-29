@@ -152,7 +152,7 @@ try:
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-    # --- HTML TABLE BUILDER (WRAPPED IN SCROLLABLE BOX) ---
+    # --- HTML TABLE BUILDER (SCROLLABLE CARD CONTAINER) ---
     def render_centered_html_table(df, format_dict=None):
         if df.empty:
             return "<p style='text-align:center; color:#64748b; margin-top:8px;'>No data available.</p>"
@@ -161,7 +161,6 @@ try:
         html = ['<div class="table-container-card"><table class="custom-data-table">']
         
         if isinstance(display_df.columns, pd.MultiIndex):
-            # Level 1: Category Header
             html.append('<thead><tr>')
             html.append('<th rowspan="2" style="vertical-align: middle;">Month Year</th>')
             for top in display_df.columns.get_level_values(0).unique():
@@ -169,7 +168,6 @@ try:
                 html.append(f'<th colspan="{span}">{top}</th>')
             html.append('</tr>')
 
-            # Level 2: Sub-headers
             html.append('<tr>')
             for col in display_df.columns:
                 html.append(f'<th>{col[1]}</th>')
@@ -188,7 +186,6 @@ try:
                 html.append('</tr>')
             html.append('</tbody></table></div>')
         else:
-            # Single Header
             html.append('<thead><tr>')
             for col in display_df.columns:
                 html.append(f'<th>{col}</th>')
@@ -199,7 +196,12 @@ try:
                     if format_dict and col in format_dict:
                         val_str = format_dict[col].format(val) if pd.notnull(val) and isinstance(val, (int, float)) else str(val)
                     else:
-                        val_str = f"{val:,.2f}" if isinstance(val, (int, float)) and val != 0 else str(val)
+                        if isinstance(val, float):
+                            val_str = f"{val:,.2f}" if val != 0 else "-"
+                        elif isinstance(val, int):
+                            val_str = f"{val}"
+                        else:
+                            val_str = str(val) if pd.notnull(val) and str(val).strip() != "" else "-"
                     html.append(f'<td>{val_str}</td>')
                 html.append('</tr>')
             html.append('</tbody></table></div>')
@@ -309,8 +311,8 @@ try:
             """
         st.markdown(header_html + table_html, unsafe_allow_html=True)
 
-    # --- MATURITY DETAILS LOGIC ---
-    def compute_maturity_detail(df, base_date_str, days=30):
+    # --- MATURITY DETAILS LOGIC (COUPON EXCLUDED FOR BILLS, INCLUDED FOR BONDS) ---
+    def compute_maturity_detail(df, base_date_str, days=30, is_bond=False):
         if df.empty or "Maturity/ Expiry Date" not in df.columns or not base_date_str:
             return pd.DataFrame(), 0.0, 0
 
@@ -324,23 +326,44 @@ try:
         if maturing.empty:
             return maturing, 0.0, 0
 
-        crore = pd.to_numeric(
+        # Standardize Outstanding to Crore
+        maturing["Outstanding (BDT Cr)"] = pd.to_numeric(
             maturing["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
         ).fillna(0) / 10.0
 
+        # Sort by chronological maturity date
         maturing["_mat_sort"] = pd.to_datetime(maturing["Maturity/ Expiry Date"], format="mixed", errors="coerce")
         maturing = maturing.sort_values(by="_mat_sort", ascending=True).drop(columns=["_mat_sort"])
         
-        cols_to_drop = [col for col in ["id", "ID", "Id", "Data_Date"] if col in maturing.columns]
-        maturing = maturing.drop(columns=cols_to_drop, errors="ignore")
+        # Standardize Market Yield display
+        if "Market Yield" in maturing.columns:
+            maturing["Market Yield"] = maturing["Market Yield"].astype(str).apply(lambda x: x if "%" in x else (f"{float(x):.2f}%" if x.replace(".", "", 1).isdigit() else x))
 
-        sl_col = next((c for c in maturing.columns if c.lower() in ["sl. no.", "sl. no", "sl_no", "sl no"]), None)
-        if sl_col:
-            maturing[sl_col] = range(1, len(maturing) + 1)
+        if is_bond:
+            # Identify Coupon Column dynamically for Bonds
+            coupon_col = next((c for c in maturing.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
+            if coupon_col and coupon_col in maturing.columns:
+                maturing["Coupon Rate"] = maturing[coupon_col].astype(str).apply(lambda x: x if "%" in x else (f"{float(x):.2f}%" if x.replace(".", "", 1).isdigit() else x))
+            else:
+                maturing["Coupon Rate"] = "-"
+
+            preferred_cols = [
+                "ISIN", "Securities Name", "Issue Date", 
+                "Maturity/ Expiry Date", "Coupon Rate", "Market Yield", 
+                "Outstanding (BDT Cr)"
+            ]
         else:
-            maturing.insert(0, "Sl. No.", range(1, len(maturing) + 1))
+            # For T-Bills: Explicitly do not include Coupon
+            preferred_cols = [
+                "ISIN", "Securities Name", "Issue Date", 
+                "Maturity/ Expiry Date", "Market Yield", 
+                "Outstanding (BDT Cr)"
+            ]
 
-        return maturing, float(crore.sum()), int(maturing["ISIN"].nunique())
+        display_df = maturing[[c for c in preferred_cols if c in maturing.columns]].copy()
+        display_df.insert(0, "Sl. No.", range(1, len(display_df) + 1))
+
+        return display_df, float(maturing["Outstanding (BDT Cr)"].sum()), int(maturing["ISIN"].nunique())
 
     # --- MATURITY LADDERING (ANALYTICS) ---
     def compute_maturity_ladder(df, base_date_str):
@@ -499,10 +522,11 @@ try:
                 match["Category"] = "Maturity / Settlement"
 
         if not match.empty:
-            if coupon_col and coupon_col in match.columns:
-                match["Coupon Rate"] = match[coupon_col]
-            else:
-                match["Coupon Rate"] = "-"
+            if instrument_label != "Treasury Bills":
+                if coupon_col and coupon_col in match.columns:
+                    match["Coupon Rate"] = match[coupon_col]
+                else:
+                    match["Coupon Rate"] = "-"
                 
             if rem_mat_col and rem_mat_col in match.columns:
                 match["Remaining Maturity"] = match[rem_mat_col]
@@ -561,10 +585,10 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Maturity Snapshot (30 Days) - Clean Side-by-Side Cards
+        # Maturity Snapshot (30 Days) - Clean Side-by-Side Cards (No Coupon for Bills, Coupon for Bonds)
         st.markdown("#### ⏰ Upcoming Maturity Snapshot (Next 30 Days)")
-        bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30)
-        secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30)
+        bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30, is_bond=False)
+        secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30, is_bond=True)
 
         mat_col1, mat_col2 = st.columns(2)
         with mat_col1:
@@ -576,7 +600,7 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not bills_mat.empty:
-                st.markdown(render_centered_html_table(bills_mat), unsafe_allow_html=True)
+                st.markdown(render_centered_html_table(bills_mat, format_dict={"Outstanding (BDT Cr)": "{:,.2f}"}), unsafe_allow_html=True)
             else:
                 st.caption("No T-Bill ISINs maturing in the next 30 days.")
 
@@ -589,7 +613,7 @@ try:
                 </div>
             """, unsafe_allow_html=True)
             if not secs_mat.empty:
-                st.markdown(render_centered_html_table(secs_mat), unsafe_allow_html=True)
+                st.markdown(render_centered_html_table(secs_mat, format_dict={"Outstanding (BDT Cr)": "{:,.2f}"}), unsafe_allow_html=True)
             else:
                 st.caption("No Bond/FRTB ISINs maturing in the next 30 days.")
 
@@ -774,12 +798,22 @@ try:
                                     total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
                                     st.success(f"**{d_inst}** | **{d_event}** in **{d_month}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                                     
-                                    preferred_cols = [
-                                        "ISIN", "Securities Name", "Category", "Event Date", 
-                                        "Event Amount (BDT Cr)", "Market Yield", "Coupon Rate", 
-                                        "Remaining Maturity", "Issue Date", "Maturity/ Expiry Date", 
-                                        "Outstanding BDT (in Mill)"
-                                    ]
+                                    # Adapt column sequence dynamically based on instrument type
+                                    if d_inst == "Treasury Bills":
+                                        preferred_cols = [
+                                            "ISIN", "Securities Name", "Category", "Event Date", 
+                                            "Event Amount (BDT Cr)", "Market Yield", 
+                                            "Remaining Maturity", "Issue Date", "Maturity/ Expiry Date", 
+                                            "Outstanding BDT (in Mill)"
+                                        ]
+                                    else:
+                                        preferred_cols = [
+                                            "ISIN", "Securities Name", "Category", "Event Date", 
+                                            "Event Amount (BDT Cr)", "Market Yield", "Coupon Rate", 
+                                            "Remaining Maturity", "Issue Date", "Maturity/ Expiry Date", 
+                                            "Outstanding BDT (in Mill)"
+                                        ]
+                                        
                                     display_cols = [c for c in preferred_cols if c in details_df.columns]
                                     
                                     st.markdown(
