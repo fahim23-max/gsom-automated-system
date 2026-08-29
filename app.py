@@ -430,7 +430,7 @@ try:
         
         return monthly[cols]
 
-    # --- DRILL-DOWN INSTRUMENT EXTRACTOR ---
+    # --- DRILL-DOWN INSTRUMENT EXTRACTOR (WITH COUPON AND REMAINING MATURITY) ---
     def get_monthly_drilldown_details(df, selected_month_period, event_type, instrument_label):
         if df.empty or "ISIN" not in df.columns:
             return pd.DataFrame()
@@ -450,6 +450,11 @@ try:
         
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
 
+        # Identify Coupon Column dynamically
+        coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
+        rem_mat_col = next((c for c in temp_df.columns if "remaining" in c.lower()), "Remaining Maturity")
+
+        match = pd.DataFrame()
         if event_type == "Newly Issued":
             first_records = temp_df[temp_df["Amt_Cr"] > 0].drop_duplicates(subset=["ISIN"], keep="first").copy()
             first_records = first_records.dropna(subset=["Issue_Dt"])
@@ -458,7 +463,6 @@ try:
                 match["Event Amount (BDT Cr)"] = match["Amt_Cr"]
                 match["Event Date"] = match["Issue_Dt"].dt.strftime("%Y-%m-%d")
                 match["Category"] = "New Issue"
-                return match
 
         elif event_type == "Reissued":
             temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
@@ -469,7 +473,6 @@ try:
                 match["Event Amount (BDT Cr)"] = match["Amt_Diff"]
                 match["Event Date"] = match["Data_Dt"].dt.strftime("%Y-%m-%d")
                 match["Category"] = "Reissue"
-                return match
 
         elif event_type == "Settled":
             max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
@@ -481,9 +484,20 @@ try:
                 match["Event Amount (BDT Cr)"] = match["Max_Amt"]
                 match["Event Date"] = match["Mat_Dt"].dt.strftime("%Y-%m-%d")
                 match["Category"] = "Maturity / Settlement"
-                return match
 
-        return pd.DataFrame()
+        if not match.empty:
+            # Ensure standard naming for Coupon Rate and Remaining Maturity
+            if coupon_col and coupon_col in match.columns:
+                match["Coupon Rate"] = match[coupon_col]
+            else:
+                match["Coupon Rate"] = "-"
+                
+            if rem_mat_col and rem_mat_col in match.columns:
+                match["Remaining Maturity"] = match[rem_mat_col]
+            else:
+                match["Remaining Maturity"] = "-"
+
+        return match
 
 
     # ==========================================
@@ -748,7 +762,14 @@ try:
                                     total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
                                     st.success(f"**{d_inst}** | **{d_event}** in **{d_month}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
                                     
-                                    display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
+                                    # Explicit column sequence including Coupon Rate and Remaining Maturity
+                                    preferred_cols = [
+                                        "ISIN", "Securities Name", "Category", "Event Date", 
+                                        "Event Amount (BDT Cr)", "Market Yield", "Coupon Rate", 
+                                        "Remaining Maturity", "Issue Date", "Maturity/ Expiry Date", 
+                                        "Outstanding BDT (in Mill)"
+                                    ]
+                                    display_cols = [c for c in preferred_cols if c in details_df.columns]
                                     
                                     st.markdown(
                                         render_centered_html_table(details_df[display_cols], format_dict={"Event Amount (BDT Cr)": "{:,.2f}"}),
