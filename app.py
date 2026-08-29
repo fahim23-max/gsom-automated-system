@@ -612,7 +612,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Active Holdings Raw View - Data_Date Retained, Remaining Maturity Untouched, Outstanding in BDT Cr, Category Dropped for Bills
+        # Active Holdings Raw View
         st.markdown("#### 📑 AVAILABLE SECURITIES IN THE MARKET")
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
         
@@ -623,23 +623,30 @@ try:
             if not df_latest_bills.empty:
                 disp_b = df_latest_bills.drop(columns=[c for c in cols_to_strip_bills if c in df_latest_bills.columns], errors="ignore").copy()
                 
-                # Convert Outstanding Amount to BDT Crore
                 if "Outstanding BDT (in Mill)" in disp_b.columns:
                     disp_b["Outstanding (BDT Cr)"] = pd.to_numeric(
                         disp_b["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
                     ).fillna(0) / 10.0
                     disp_b = disp_b.drop(columns=["Outstanding BDT (in Mill)"])
 
+                for num_col in ["Issue Price", "Market Price", "Market Yield", "Remaining Maturity"]:
+                    if num_col in disp_b.columns:
+                        disp_b[num_col] = pd.to_numeric(
+                            disp_b[num_col].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False).str.strip(),
+                            errors="coerce"
+                        )
+
+                format_dict_b = {}
+                if "Outstanding (BDT Cr)" in disp_b.columns: format_dict_b["Outstanding (BDT Cr)"] = "{:,.2f}"
+                if "Issue Price" in disp_b.columns: format_dict_b["Issue Price"] = "{:,.4f}"
+                if "Market Price" in disp_b.columns: format_dict_b["Market Price"] = "{:,.4f}"
+                if "Market Yield" in disp_b.columns: format_dict_b["Market Yield"] = "{:.4f}%"
+                if "Remaining Maturity" in disp_b.columns: format_dict_b["Remaining Maturity"] = "{:.4f}"
+
                 st.dataframe(
-                    disp_b.style.format({
-                        "Outstanding (BDT Cr)": "{:,.2f}",
-                        "Issue Price": "{:,.4f}",
-                        "Market Price": "{:,.4f}",
-                        "Market Yield": "{:,.4f}%",
-                        "Remaining Maturity": "{:,.4f}"
-                    }),
+                    disp_b.style.format(format_dict_b, na_rep="-"),
                     hide_index=True,
-                    width="stretch"
+                    use_container_width=True
                 )
             else:
                 st.info("No T-Bill data available.")
@@ -648,24 +655,31 @@ try:
             if not df_latest_secs.empty:
                 disp_s = df_latest_secs.drop(columns=[c for c in cols_to_strip_bonds if c in df_latest_secs.columns], errors="ignore").copy()
                 
-                # Convert Outstanding Amount to BDT Crore
                 if "Outstanding BDT (in Mill)" in disp_s.columns:
                     disp_s["Outstanding (BDT Cr)"] = pd.to_numeric(
                         disp_s["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
                     ).fillna(0) / 10.0
                     disp_s = disp_s.drop(columns=["Outstanding BDT (in Mill)"])
 
+                for num_col in ["Issue Price", "Market Price", "Market Yield", "Coupon Rate", "Remaining Maturity"]:
+                    if num_col in disp_s.columns:
+                        disp_s[num_col] = pd.to_numeric(
+                            disp_s[num_col].astype(str).str.replace("%", "", regex=False).str.replace(",", "", regex=False).str.strip(),
+                            errors="coerce"
+                        )
+
+                format_dict_s = {}
+                if "Outstanding (BDT Cr)" in disp_s.columns: format_dict_s["Outstanding (BDT Cr)"] = "{:,.2f}"
+                if "Issue Price" in disp_s.columns: format_dict_s["Issue Price"] = "{:,.4f}"
+                if "Market Price" in disp_s.columns: format_dict_s["Market Price"] = "{:,.4f}"
+                if "Market Yield" in disp_s.columns: format_dict_s["Market Yield"] = "{:.4f}%"
+                if "Coupon Rate" in disp_s.columns: format_dict_s["Coupon Rate"] = "{:.2f}%"
+                if "Remaining Maturity" in disp_s.columns: format_dict_s["Remaining Maturity"] = "{:.4f}"
+
                 st.dataframe(
-                    disp_s.style.format({
-                        "Outstanding (BDT Cr)": "{:,.2f}",
-                        "Issue Price": "{:,.4f}",
-                        "Market Price": "{:,.4f}",
-                        "Market Yield": "{:,.4f}%",
-                        "Coupon Rate": "{:,.2f}%",
-                        "Remaining Maturity": "{:,.4f}"
-                    }),
+                    disp_s.style.format(format_dict_s, na_rep="-"),
                     hide_index=True,
-                    width="stretch"
+                    use_container_width=True
                 )
             else:
                 st.info("No Securities data available.")
