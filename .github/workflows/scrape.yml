@@ -2,31 +2,32 @@ name: Scrape GSOM Data
 
 on:
   schedule:
-    - cron: '15 4 * * *' # Runs daily at 10:15 AM BST (04:15 UTC)
-  workflow_dispatch:
+    # 10:15 AM BST (UTC+6) is 04:15 AM UTC
+    - cron: '15 4 * * *'
+  workflow_dispatch: # Allows manual run anytime
 
 jobs:
   scrape:
     runs-on: ubuntu-latest
-    
+
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
-      - uses: actions/checkout@v3
-      
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
-          playwright install chromium
-          
+
       - name: Run Bond & FRTB Scraper
-        run: python scraper.py
-        
+        run: python scraper_bonds.py
+
       - name: Run T-Bill Scraper
         run: python scraper_bills.py
