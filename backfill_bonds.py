@@ -117,7 +117,8 @@ def scrape_single_date(session, date_str):
         return 0
 
 def main():
-    start_date = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
+    # Target available BB GSOM history range
+    start_date = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
     end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
 
     dates = []
@@ -127,7 +128,10 @@ def main():
             dates.append(curr.strftime("%Y-%m-%d"))
         curr += timedelta(days=1)
 
-    print(f"Starting reliable sequential ingestion for {len(dates)} Bond dates...", flush=True)
+    # Reverse to scrape latest records first
+    dates.reverse()
+
+    print(f"Starting ingestion for {len(dates)} Bond dates (from {dates[0]} to {dates[-1]})...", flush=True)
 
     session = create_session()
     total_rows = 0
@@ -139,7 +143,7 @@ def main():
             print(f"[{idx}/{len(dates)}] [OK] {d_str} -> +{row_count} records", flush=True)
         else:
             print(f"[{idx}/{len(dates)}] [SKIP/EMPTY] {d_str}", flush=True)
-        time.sleep(0.15)  # Safe delay to prevent IP bans
+        time.sleep(0.15)
 
     session.close()
     print(f"\nFINISHED! Synced a total of {total_rows} Bond/FRTB records.", flush=True)
