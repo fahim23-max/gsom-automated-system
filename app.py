@@ -45,17 +45,17 @@ try:
             font-weight: 800 !important;
             text-align: center !important;
             vertical-align: middle !important;
-            padding: 10px 8px !important;
+            padding: 8px 6px !important;
             border: 1px solid #cbd5e1 !important;
-            font-size: 0.90rem !important;
+            font-size: 0.82rem !important;
             letter-spacing: 0.02em;
         }
         .custom-data-table td {
             text-align: center !important;
             vertical-align: middle !important;
-            padding: 8px 10px !important;
+            padding: 8px 6px !important;
             border: 1px solid #e2e8f0 !important;
-            font-size: 0.92rem !important;
+            font-size: 0.86rem !important;
             color: #0f172a !important;
         }
         .custom-data-table tr:nth-child(even) {
@@ -143,38 +143,39 @@ try:
 
     engine = create_engine(DATABASE_URL, connect_args={'prepare_threshold': None})
 
-    # --- HTML TABLE BUILDER (CENTER ALIGNMENT & BOLD BLACK HEADERS) ---
+    # --- HTML TABLE BUILDER (2-TIER MULTIINDEX WITH SEPARATE YIELDS) ---
     def render_centered_html_table(df, format_dict=None):
         if df.empty:
             return "<p style='text-align:center; color:#64748b;'>No data available.</p>"
         
         display_df = df.copy()
-        if format_dict:
-            for col, fmt in format_dict.items():
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].apply(lambda x: fmt.format(x) if pd.notnull(x) and isinstance(x, (int, float)) else x)
 
         html = ['<table class="custom-data-table">']
         
         if isinstance(display_df.columns, pd.MultiIndex):
-            levels = display_df.columns.nlevels
-            for lvl in range(levels):
-                html.append('<tr>')
-                if lvl == 0 and display_df.index.name:
-                    html.append(f'<th rowspan="{levels}">{display_df.index.name}</th>')
-                elif lvl > 0 and display_df.index.name:
-                    pass
-                for col in display_df.columns.get_level_values(lvl).unique():
-                    span = sum(1 for c in display_df.columns if c[lvl] == col)
-                    html.append(f'<th colspan="{span}">{col}</th>')
-                html.append('</tr>')
-            
-            html.append('<tbody>')
+            # Level 1: Category Header (Treasury Bills, FRTBs, Treasury Bonds)
+            html.append('<thead><tr>')
+            html.append('<th rowspan="2" style="vertical-align: middle;">Month Year</th>')
+            for top in display_df.columns.get_level_values(0).unique():
+                span = sum(1 for c in display_df.columns if c[0] == top)
+                html.append(f'<th colspan="{span}">{top}</th>')
+            html.append('</tr>')
+
+            # Level 2: Sub-headers (Newly Issued, New WA Yield, Reissued, Reissue WA Yield, Settled)
+            html.append('<tr>')
+            for col in display_df.columns:
+                html.append(f'<th>{col[1]}</th>')
+            html.append('</tr></thead><tbody>')
+
             for idx, row in display_df.iterrows():
                 html.append('<tr>')
                 html.append(f'<td style="font-weight:700; background-color:#f8fafc;">{idx}</td>')
-                for val in row:
-                    val_str = f"{val:,.2f}" if isinstance(val, (int, float)) and val != 0 else (f"{val}" if val != 0 else "-")
+                for col_name, val in row.items():
+                    sub_col = col_name[1]
+                    if "Yield" in sub_col:
+                        val_str = f"{val:.2f}%" if pd.notnull(val) and val > 0 else "-"
+                    else:
+                        val_str = f"{val:,.2f}" if pd.notnull(val) and val != 0 else "-"
                     html.append(f'<td>{val_str}</td>')
                 html.append('</tr>')
             html.append('</tbody></table>')
@@ -185,8 +186,12 @@ try:
             html.append('</tr></thead><tbody>')
             for _, row in display_df.iterrows():
                 html.append('<tr>')
-                for val in row:
-                    html.append(f'<td>{val}</td>')
+                for col, val in row.items():
+                    if format_dict and col in format_dict:
+                        val_str = format_dict[col].format(val) if pd.notnull(val) and isinstance(val, (int, float)) else str(val)
+                    else:
+                        val_str = f"{val:,.2f}" if isinstance(val, (int, float)) and val != 0 else str(val)
+                    html.append(f'<td>{val_str}</td>')
                 html.append('</tr>')
             html.append('</tbody></table>')
 
@@ -355,9 +360,9 @@ try:
         ladder.columns = ["Time Bucket", "Active ISINs", "Outstanding (BDT Cr)"]
         return ladder
 
-    # --- MONTHLY LEDGER COMPUTATION (FILTERED STRICTLY TO SELECTED DATE RANGE) ---
+    # --- MONTHLY LEDGER COMPUTATION (SEPARATE NEW & REISSUE WA YIELDS) ---
     def calculate_monthly_metrics(df, start_d=None, end_d=None):
-        cols = ["Newly Issued", "Reissued", "WA Yield", "Settled"]
+        cols = ["Newly Issued", "New WA Yield", "Reissued", "Reissue WA Yield", "Settled"]
         if df.empty or "ISIN" not in df.columns or "Data_Date" not in df.columns:
             return pd.DataFrame(columns=cols)
 
@@ -378,13 +383,12 @@ try:
         temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce").dt.normalize() if issue_col else pd.NaT
         temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce").dt.normalize() if mat_col else pd.NaT
         
-        # Determine strict bounds
         min_date = pd.to_datetime(start_d).normalize() if start_d else temp_df["Data_Dt"].min()
         max_date = pd.to_datetime(end_d).normalize() if end_d else temp_df["Data_Dt"].max()
         
         temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
 
-        # 1. NEWLY ISSUED: Must have Issue Date occurring within the selected start/end range
+        # 1. NEWLY ISSUED & NEW WA YIELD
         first_records = temp_df[temp_df["Amt_Cr"] > 0].drop_duplicates(subset=["ISIN"], keep="first").copy()
         first_records = first_records.dropna(subset=["Issue_Dt"])
         first_records = first_records[(first_records["Issue_Dt"] >= min_date) & (first_records["Issue_Dt"] <= max_date)]
@@ -392,8 +396,9 @@ try:
         
         newly_issued = first_records.groupby("Month")["Amt_Cr"].sum().rename("Newly Issued")
         newly_issued_yield_vol = (first_records["Amt_Cr"] * first_records["Yield_Val"]).groupby(first_records["Month"]).sum()
+        new_wa_yield = (newly_issued_yield_vol / newly_issued).fillna(0).rename("New WA Yield")
 
-        # 2. REISSUED: Outstanding amount increases during the selected snapshot window
+        # 2. REISSUED & REISSUE WA YIELD
         temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
         reissues = temp_df[temp_df["Amt_Diff"] > 0].copy()
         reissues = reissues.dropna(subset=["Data_Dt"])
@@ -402,12 +407,9 @@ try:
         
         reissued = reissues.groupby("Month")["Amt_Diff"].sum().rename("Reissued")
         reissued_yield_vol = (reissues["Amt_Diff"] * reissues["Yield_Val"]).groupby(reissues["Month"]).sum()
+        reissue_wa_yield = (reissued_yield_vol / reissued).fillna(0).rename("Reissue WA Yield")
 
-        total_vol = newly_issued.add(reissued, fill_value=0)
-        total_yield_vol = newly_issued_yield_vol.add(reissued_yield_vol, fill_value=0)
-        wa_yield = (total_yield_vol / total_vol).fillna(0).rename("WA Yield")
-
-        # 3. SETTLED / MATURED: Must have Maturity Date falling strictly inside the selected start/end range
+        # 3. SETTLED
         max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
         last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
         last_records = last_records.merge(max_amt_per_isin, on="ISIN")
@@ -417,13 +419,12 @@ try:
         past_maturities["Month"] = past_maturities["Mat_Dt"].dt.to_period("M")
         settled = past_maturities.groupby("Month")["Max_Amt"].sum().rename("Settled")
 
-        monthly = pd.concat([newly_issued, reissued, wa_yield, settled], axis=1).fillna(0)
+        monthly = pd.concat([newly_issued, new_wa_yield, reissued, reissue_wa_yield, settled], axis=1).fillna(0)
         
         for c in cols:
             if c not in monthly.columns:
                 monthly[c] = 0.0
                 
-        # Filter monthly index strictly between selected Start and End months
         start_p = min_date.to_period("M")
         end_p = max_date.to_period("M")
         monthly = monthly[(monthly.index >= start_p) & (monthly.index <= end_p)]
@@ -525,6 +526,7 @@ try:
             df_latest_frtbs = pd.DataFrame()
             df_latest_bonds = pd.DataFrame()
 
+        # Three-Column Market Summary
         sum_col1, sum_col2, sum_col3 = st.columns(3)
         with sum_col1:
             render_summary_block(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
@@ -535,6 +537,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
+        # Maturity Snapshot (30 Days)
         st.markdown("#### ⏰ Upcoming Maturity Snapshot (Next 30 Days)")
         bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30)
         secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30)
@@ -568,6 +571,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
+        # Active Holdings Raw View
         st.markdown("#### 📑 Active Holdings Table (Latest Snapshot)")
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
         with tab1:
@@ -628,7 +632,7 @@ try:
                 else:
                     st.info("No data available.")
 
-        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER (FILTERED)
+        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER (INTERACTIVE DRILL-DOWN)
         with ana_tab2:
             st.markdown("#### 📅 Monthly Issuance, Reissuance & Settlement Ledger (BDT Cr)")
             with st.form("analytics_range_form"):
@@ -659,49 +663,67 @@ try:
                         df_ana_frtbs = pd.DataFrame()
                         df_ana_bonds = pd.DataFrame()
 
-                    # Explicitly pass start and end date bounds to eliminate phantom historic rows
+                    sub_cols = ["Newly Issued", "New WA Yield", "Reissued", "Reissue WA Yield", "Settled"]
+
                     bills_monthly = calculate_monthly_metrics(df_ana_bills, s_d, e_d)
                     frtbs_monthly = calculate_monthly_metrics(df_ana_frtbs, s_d, e_d)
                     bonds_monthly = calculate_monthly_metrics(df_ana_bonds, s_d, e_d)
 
                     dfs_to_join = []
+                    
                     if not bills_monthly.empty:
-                        bills_monthly.columns = pd.MultiIndex.from_product([["Treasury Bills"], bills_monthly.columns])
-                        dfs_to_join.append(bills_monthly)
-                    if not frtbs_monthly.empty:
-                        frtbs_monthly.columns = pd.MultiIndex.from_product([["FRTBs"], frtbs_monthly.columns])
-                        dfs_to_join.append(frtbs_monthly)
-                    if not bonds_monthly.empty:
-                        bonds_monthly.columns = pd.MultiIndex.from_product([["Treasury Bonds"], bonds_monthly.columns])
-                        dfs_to_join.append(bonds_monthly)
+                        b_df = bills_monthly.copy()
+                        b_df.columns = pd.MultiIndex.from_product([["Treasury Bills"], sub_cols])
+                        dfs_to_join.append(b_df)
+                    else:
+                        empty_idx = pd.MultiIndex.from_product([["Treasury Bills"], sub_cols])
+                        dfs_to_join.append(pd.DataFrame(columns=empty_idx))
 
-                    if dfs_to_join:
-                        combined_monthly = dfs_to_join[0]
-                        for d in dfs_to_join[1:]:
-                            combined_monthly = combined_monthly.join(d, how="outer")
-                        combined_monthly = combined_monthly.fillna(0)
-                        combined_monthly.sort_index(ascending=False, inplace=True)
-                        
+                    if not frtbs_monthly.empty:
+                        f_df = frtbs_monthly.copy()
+                        f_df.columns = pd.MultiIndex.from_product([["FRTBs"], sub_cols])
+                        dfs_to_join.append(f_df)
+                    else:
+                        empty_idx = pd.MultiIndex.from_product([["FRTBs"], sub_cols])
+                        dfs_to_join.append(pd.DataFrame(columns=empty_idx))
+
+                    if not bonds_monthly.empty:
+                        bd_df = bonds_monthly.copy()
+                        bd_df.columns = pd.MultiIndex.from_product([["Treasury Bonds"], sub_cols])
+                        dfs_to_join.append(bd_df)
+                    else:
+                        empty_idx = pd.MultiIndex.from_product([["Treasury Bonds"], sub_cols])
+                        dfs_to_join.append(pd.DataFrame(columns=empty_idx))
+
+                    # Combine all 3 asset blocks side-by-side
+                    combined_monthly = dfs_to_join[0]
+                    for d in dfs_to_join[1:]:
+                        combined_monthly = combined_monthly.join(d, how="outer")
+                    
+                    combined_monthly = combined_monthly.fillna(0)
+                    combined_monthly.sort_index(ascending=False, inplace=True)
+
+                    if not combined_monthly.empty:
                         month_periods = combined_monthly.index.tolist()
                         combined_display = combined_monthly.copy()
                         combined_display.index = combined_display.index.strftime("%b-%y")
                         combined_display.index.name = "Month Year"
 
-                        # Render Centered HTML Table with Bold Black Headers
+                        # 1. Render Clean Multi-Tier HTML Table with Bold Black Headers
                         st.markdown(
                             render_centered_html_table(combined_display),
                             unsafe_allow_html=True
                         )
 
-                        # --- DRILL-DOWN SELECTION CONTROLS ---
+                        # 2. Interactive Instrument Breakdown Expanders
                         st.markdown("---")
-                        st.markdown("#### 🔍 Monthly Instrument Breakdown Drill-Down")
-                        
+                        st.markdown("#### 🔍 Inspect Underlyings / Instrument Breakdown")
+
                         c1, c2, c3 = st.columns(3)
                         with c1:
                             selected_label = st.selectbox("Select Month", combined_display.index.tolist())
                         with c2:
-                            inst_choice = st.selectbox("Select Instrument Category", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
+                            inst_choice = st.selectbox("Select Instrument", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
                         with c3:
                             event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
 
