@@ -53,39 +53,6 @@ try:
             font-weight: 600;
             color: #0f172a;
         }
-        .ledger-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 8px;
-            margin-bottom: 12px;
-            font-family: sans-serif;
-            background-color: #ffffff;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-        }
-        .ledger-table th {
-            background-color: #f1f5f9;
-            color: #334155;
-            font-weight: 700;
-            text-align: center;
-            padding: 10px;
-            border: 1px solid #e2e8f0;
-            font-size: 0.90rem;
-        }
-        .ledger-table td {
-            text-align: center;
-            padding: 10px;
-            border: 1px solid #e2e8f0;
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: #0f172a;
-        }
-        .ledger-table td:first-child {
-            background-color: #f8fafc;
-            font-weight: 700;
-            color: #475569;
-        }
         .bill-header { color: #dc2626; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
         .frtb-header { color: #059669; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
         .bond-header { color: #2563eb; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
@@ -358,40 +325,60 @@ try:
                 monthly[c] = 0.0
         return monthly[cols]
 
-    def render_monthly_ledger_html(df):
-        if df.empty:
-            st.info("No data available to compute ledger.")
-            return
+    # --- DRILL-DOWN INSTRUMENT EXTRACTOR ---
+    def get_monthly_drilldown_details(df, selected_month_period, event_type, instrument_label):
+        if df.empty or "ISIN" not in df.columns:
+            return pd.DataFrame()
 
-        html = '<div style="overflow-x: auto;"><table class="ledger-table"><thead><tr>'
-        html += '<th rowspan="2" style="vertical-align: middle; width: 10%;">Month Year</th>'
+        temp_df = df.copy()
+        temp_df["Amt_Cr"] = pd.to_numeric(
+            temp_df["Outstanding BDT (in Mill)"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+        ).fillna(0) / 10.0
+
+        temp_df["Data_Dt"] = pd.to_datetime(temp_df["Data_Date"], errors="coerce").dt.normalize()
         
-        level0_cols = df.columns.get_level_values(0).unique()
-        for col in level0_cols:
-            colspan = sum(1 for c in df.columns if c[0] == col)
-            if colspan > 0:
-                html += f'<th colspan="{colspan}" style="border-left: 2px solid #cbd5e1; color: #1e293b;">{col}</th>'
-        html += '</tr><tr>'
+        issue_col = "Issue Date" if "Issue Date" in temp_df.columns else None
+        mat_col = "Maturity/ Expiry Date" if "Maturity/ Expiry Date" in temp_df.columns else None
         
-        for idx, col in enumerate(df.columns):
-            border_style = "border-left: 2px solid #cbd5e1;" if idx % 4 == 0 else ""
-            html += f'<th style="{border_style}">{col[1]}</th>'
-        html += '</tr></thead><tbody>'
+        temp_df["Issue_Dt"] = pd.to_datetime(temp_df[issue_col], format="mixed", errors="coerce").dt.normalize() if issue_col else pd.NaT
+        temp_df["Mat_Dt"] = pd.to_datetime(temp_df[mat_col], format="mixed", errors="coerce").dt.normalize() if mat_col else pd.NaT
         
-        for idx, row in df.iterrows():
-            html += f'<tr><td>{idx}</td>'
-            for col_idx, val in enumerate(row):
-                col_name = df.columns[col_idx][1]
-                border_style = "border-left: 2px solid #cbd5e1;" if col_idx % 4 == 0 else ""
-                if val == 0:
-                    html += f'<td style="color: #94a3b8; {border_style}">-</td>'
-                elif col_name == "WA Yield":
-                    html += f'<td style="{border_style}">{val:.4f}%</td>'
-                else:
-                    html += f'<td style="{border_style}">{val:,.2f}</td>'
-            html += '</tr>'
-        html += '</tbody></table></div>'
-        st.markdown(html, unsafe_allow_html=True)
+        temp_df = temp_df.sort_values(by=["ISIN", "Data_Dt"])
+
+        if event_type == "Newly Issued":
+            first_records = temp_df[temp_df["Amt_Cr"] > 0].drop_duplicates(subset=["ISIN"], keep="first").copy()
+            first_records = first_records.dropna(subset=["Issue_Dt"])
+            match = first_records[first_records["Issue_Dt"].dt.to_period("M") == selected_month_period].copy()
+            if not match.empty:
+                match["Event Amount (BDT Cr)"] = match["Amt_Cr"]
+                match["Event Date"] = match["Issue_Dt"].dt.strftime("%Y-%m-%d")
+                match["Category"] = "New Issue"
+                return match
+
+        elif event_type == "Reissued":
+            temp_df["Amt_Diff"] = temp_df.groupby("ISIN")["Amt_Cr"].diff()
+            reissues = temp_df[temp_df["Amt_Diff"] > 0].copy()
+            reissues = reissues.dropna(subset=["Data_Dt"])
+            match = reissues[reissues["Data_Dt"].dt.to_period("M") == selected_month_period].copy()
+            if not match.empty:
+                match["Event Amount (BDT Cr)"] = match["Amt_Diff"]
+                match["Event Date"] = match["Data_Dt"].dt.strftime("%Y-%m-%d")
+                match["Category"] = "Reissue"
+                return match
+
+        elif event_type == "Settled":
+            max_amt_per_isin = temp_df.groupby("ISIN")["Amt_Cr"].max().reset_index(name="Max_Amt")
+            last_records = temp_df.drop_duplicates(subset=["ISIN"], keep="last").copy()
+            last_records = last_records.merge(max_amt_per_isin, on="ISIN")
+            past_mat = last_records.dropna(subset=["Mat_Dt"]).copy()
+            match = past_mat[past_mat["Mat_Dt"].dt.to_period("M") == selected_month_period].copy()
+            if not match.empty:
+                match["Event Amount (BDT Cr)"] = match["Max_Amt"]
+                match["Event Date"] = match["Mat_Dt"].dt.strftime("%Y-%m-%d")
+                match["Category"] = "Maturity / Settlement"
+                return match
+
+        return pd.DataFrame()
 
 
     # ==========================================
@@ -422,7 +409,6 @@ try:
             </div>
         """, unsafe_allow_html=True)
 
-        # Load ONLY the latest date snapshot
         df_latest_bills = load_snapshot("daily_bills", latest_bill_date)
         df_latest_secs = load_snapshot("daily_securities", latest_sec_date)
 
@@ -479,7 +465,7 @@ try:
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
-        # Latest Raw Records Table
+        # Active Holdings Raw View
         st.markdown("#### 📑 Active Holdings Table (Latest Snapshot)")
         tab1, tab2 = st.tabs(["📉 Treasury Bills", "📈 Bonds & FRTBs"])
         with tab1:
@@ -502,7 +488,7 @@ try:
             <div style="margin-bottom: 1.25rem;">
                 <h2 style="margin-bottom: 0;">📈 Treasury Analytics &amp; ALM Laddering</h2>
                 <p style="color:#64748b; font-size:1rem; margin-top:0.25rem;">
-                    Maturity gap laddering and historical month-wise issuance, reissuance, and settlement ledger.
+                    Maturity gap laddering and interactive monthly ledger drill-down.
                 </p>
             </div>
         """, unsafe_allow_html=True)
@@ -532,21 +518,28 @@ try:
                 else:
                     st.info("No data available.")
 
-        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER
+        # TAB 2: MONTHLY ISSUANCE & SETTLEMENT LEDGER (INTERACTIVE DRILL-DOWN)
         with ana_tab2:
             st.markdown("#### 📅 Monthly Issuance, Reissuance & Settlement Ledger (BDT Cr)")
             with st.form("analytics_range_form"):
                 col_a1, col_a2 = st.columns(2)
                 with col_a1:
-                    ana_start = st.date_input("Start Date", value=pd.to_datetime(latest_bill_date or "2026-01-01").date() - timedelta(days=180))
+                    ana_start = st.date_input("Start Date", value=pd.to_datetime(latest_bill_date or "2026-01-01").date() - timedelta(days=240))
                 with col_a2:
                     ana_end = st.date_input("End Date", value=pd.to_datetime(latest_bill_date or "2026-08-27").date())
                 run_ledger = st.form_submit_button("📊 Compute Ledger", type="primary")
 
             if run_ledger:
-                with st.spinner("Computing monthly volume & weighted yields across selected history..."):
-                    df_ana_bills = load_historical_range("daily_bills", ana_start, ana_end)
-                    df_ana_secs = load_historical_range("daily_securities", ana_start, ana_end)
+                st.session_state["ana_start"] = str(ana_start)
+                st.session_state["ana_end"] = str(ana_end)
+
+            if "ana_start" in st.session_state and "ana_end" in st.session_state:
+                s_d = st.session_state["ana_start"]
+                e_d = st.session_state["ana_end"]
+
+                with st.spinner("Computing monthly volume across selected history..."):
+                    df_ana_bills = load_historical_range("daily_bills", s_d, e_d)
+                    df_ana_secs = load_historical_range("daily_securities", s_d, e_d)
 
                     if not df_ana_secs.empty:
                         frtb_mask_ana = df_ana_secs.apply(lambda row: row.astype(str).str.contains('FRTB', case=False).any(), axis=1)
@@ -577,8 +570,61 @@ try:
                             combined_monthly = combined_monthly.join(d, how="outer")
                         combined_monthly = combined_monthly.fillna(0)
                         combined_monthly.sort_index(ascending=False, inplace=True)
-                        combined_monthly.index = combined_monthly.index.strftime("%b-%y")
-                        render_monthly_ledger_html(combined_monthly)
+                        
+                        # Store raw periods for drilling
+                        month_periods = combined_monthly.index.tolist()
+                        combined_display = combined_monthly.copy()
+                        combined_display.index = combined_display.index.strftime("%b-%y")
+                        combined_display.index.name = "Month Year"
+
+                        # Display MultiIndex Dataframe with Native Row Selection Event
+                        st.caption("💡 **Select any month in the table below to inspect its individual underlying ISIN breakdown:**")
+                        
+                        selection_event = st.dataframe(
+                            combined_display.style.format(
+                                lambda v: f"{v:.4f}%" if isinstance(v, float) and 0 < v < 100 and "." in str(v) else (f"{v:,.2f}" if v != 0 else "-")
+                            ),
+                            width="stretch",
+                            on_select="rerun",
+                            selection_mode="single-row",
+                            key="ledger_table_selector"
+                        )
+
+                        # --- DRILL-DOWN CONTAINER ---
+                        selected_rows = selection_event.selection.rows if selection_event and hasattr(selection_event, "selection") else []
+                        
+                        if selected_rows:
+                            selected_idx = selected_rows[0]
+                            selected_period = month_periods[selected_idx]
+                            selected_label = combined_display.index[selected_idx]
+
+                            st.markdown(f"### 🔍 Detailed Instrument Ledger — **{selected_label}**")
+                            
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                inst_choice = st.selectbox("Select Instrument Category", ["Treasury Bills", "FRTBs", "Treasury Bonds"])
+                            with c2:
+                                event_choice = st.selectbox("Select Event Type", ["Newly Issued", "Reissued", "Settled"])
+
+                            target_df = df_ana_bills if inst_choice == "Treasury Bills" else (df_ana_frtbs if inst_choice == "FRTBs" else df_ana_bonds)
+                            
+                            details_df = get_monthly_drilldown_details(target_df, selected_period, event_choice, inst_choice)
+
+                            if not details_df.empty:
+                                total_event_cr = details_df["Event Amount (BDT Cr)"].sum()
+                                st.success(f"**{inst_choice}** | **{event_choice}** in **{selected_label}**: **৳ {total_event_cr:,.2f} Cr** across **{details_df['ISIN'].nunique()} ISINs**")
+                                
+                                display_cols = [c for c in ["ISIN", "Category", "Event Date", "Event Amount (BDT Cr)", "Market Yield", "Issue Date", "Maturity/ Expiry Date", "Outstanding BDT (in Mill)"] if c in details_df.columns]
+                                st.dataframe(details_df[display_cols].style.format({"Event Amount (BDT Cr)": "{:,.2f}"}), hide_index=True, width="stretch")
+                                
+                                st.download_button(
+                                    f"⬇️ Download {selected_label} {inst_choice} {event_choice} (Excel)",
+                                    data=to_excel_bytes(details_df, f"{selected_label}_{event_choice}"),
+                                    file_name=f"details_{selected_label}_{inst_choice}_{event_choice}.xlsx",
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                )
+                            else:
+                                st.info(f"No {inst_choice} recorded as {event_choice} in {selected_label}.")
                     else:
                         st.info("No records found in this range.")
 
