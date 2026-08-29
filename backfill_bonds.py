@@ -1,7 +1,10 @@
 import os
+import time
 import concurrent.futures
 from datetime import datetime, timedelta
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, text
 
@@ -14,8 +17,8 @@ if not DATABASE_URL:
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
-    pool_size=20,
-    max_overflow=10,
+    pool_size=10,
+    max_overflow=6,
 )
 
 UPSERT_SQL = text("""
@@ -35,6 +38,19 @@ UPSERT_SQL = text("""
         "Next Coupon Date" = EXCLUDED."Next Coupon Date";
 """)
 
+def create_session():
+    session = requests.Session()
+    retry_strategy = Retry(
+        total=6,
+        backoff_factor=1,
+        status_forcelist=[429, 500, 502, 503, 504,505],
+        allowed_methods=["POST", "GET"]
+    )
+    adapter = HTTPAdapter(max_retries=retry_strategy)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
 def upsert_records(records):
     if not records:
         return
@@ -43,18 +59,16 @@ def upsert_records(records):
 
 def scrape_single_date(date_str):
     picker_value = datetime.strptime(date_str, "%Y-%m-%d").strftime("%d-%b-%y").upper()
-    
-    payload = {
-        "picker_date": picker_value,
-        "submit": "Submit"
-    }
+    payload = {"picker_date": picker_value, "submit": "Submit"}
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Referer": URL
     }
 
+    session = create_session()
     try:
-        resp = requests.post(URL, data=payload, headers=headers, timeout=15)
+        time.sleep(0.2)  # Polite throttle
+        resp = session.post(URL, data=payload, headers=headers, timeout=30)
         if resp.status_code != 200:
             return date_str, 0
 
@@ -104,9 +118,11 @@ def scrape_single_date(date_str):
     except Exception as e:
         print(f"Error on {date_str}: {e}", flush=True)
         return date_str, 0
+    finally:
+        session.close()
 
 def main():
-    start_date = datetime.strptime("2024-01-01", "%Y-%m-%d").date()
+    start_date = datetime.strptime("2020-01-01", "%Y-%m-%d").date()
     end_date = datetime.strptime("2026-08-27", "%Y-%m-%d").date()
 
     dates = []
@@ -116,10 +132,11 @@ def main():
             dates.append(curr.strftime("%Y-%m-%d"))
         curr += timedelta(days=1)
 
-    print(f"Starting ingestion for {len(dates)} Bond dates...", flush=True)
+    print(f"Starting resilient ingestion for {len(dates)} Bond dates with 2 workers...", flush=True)
 
     total_rows = 0
-    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+    # Keep concurrency low (2 workers) to prevent server timeouts
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         futures = {executor.submit(scrape_single_date, d): d for d in dates}
         for future in concurrent.futures.as_completed(futures):
             d_str, row_count = future.result()
