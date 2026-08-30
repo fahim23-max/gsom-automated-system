@@ -26,10 +26,56 @@ try:
             padding-bottom: 2.5rem;
         }
 
-        /* Summary Wrapper with Guaranteed Margins */
-        .summary-card-wrapper {
-            margin: 0 8px 14px 8px;
+        /* 3-Card Summary Flexbox Grid */
+        .summary-grid-container {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+            width: 100%;
+            margin-bottom: 1.5rem;
         }
+
+        .summary-card {
+            background-color: transparent;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .summary-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 6px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid #cbd5e1;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            height: 100%;
+        }
+        .summary-table th {
+            background-color: #e2e8f0;
+            color: #0f172a;
+            font-weight: 700;
+            text-align: center;
+            padding: 8px 6px;
+            border: 1px solid #cbd5e1;
+            font-size: 0.85rem;
+            white-space: nowrap;
+        }
+        .summary-table td {
+            text-align: center;
+            padding: 10px 6px;
+            border: 1px solid #e2e8f0;
+            font-size: 0.95rem;
+            font-weight: 600;
+            color: #0f172a;
+            vertical-align: middle;
+        }
+
+        .bill-header { color: #dc2626; font-weight: bold; font-size: 1.05rem; margin-bottom: 4px; text-align: center; }
+        .frtb-header { color: #059669; font-weight: bold; font-size: 1.05rem; margin-bottom: 4px; text-align: center; }
+        .bond-header { color: #2563eb; font-weight: bold; font-size: 1.05rem; margin-bottom: 4px; text-align: center; }
 
         /* Isolated Scrollable Container for Side-by-Side Tables */
         .table-container-card {
@@ -79,37 +125,6 @@ try:
             background-color: #f1f5f9;
         }
 
-        .summary-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 8px;
-            margin-bottom: 12px;
-            font-family: sans-serif;
-            background-color: #ffffff;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-        }
-        .summary-table th {
-            background-color: #e2e8f0;
-            color: #000000;
-            font-weight: 800;
-            text-align: center;
-            padding: 8px;
-            border: 1px solid #cbd5e1;
-            font-size: 0.90rem;
-        }
-        .summary-table td {
-            text-align: center;
-            padding: 10px;
-            border: 1px solid #e2e8f0;
-            font-size: 1.05rem;
-            font-weight: 600;
-            color: #0f172a;
-        }
-        .bill-header { color: #dc2626; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
-        .frtb-header { color: #059669; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
-        .bond-header { color: #2563eb; font-weight: bold; font-size: 1.1rem; margin-bottom: 4px; text-align: center; }
         .custom-metric-card {
             background-color: #ffffff !important;
             border: 1px solid #e2e8f0 !important;
@@ -252,13 +267,17 @@ try:
         q = text(f'SELECT * FROM public.{table_name} WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
-    # --- SUMMARY BLOCK RENDERER ---
-    def render_summary_block(df, actual_date, title, header_class, include_coupon=False):
+    # --- UNIFIED 3-CARD SUMMARY HTML BUILDER ---
+    def generate_summary_card_html(df, actual_date, title, header_class, include_coupon=False):
         if df.empty:
-            st.markdown(f'<div class="summary-card-wrapper"><div class="{header_class}">{title}</div>', unsafe_allow_html=True)
-            st.info(f"No {title} data available for {actual_date}.")
-            st.markdown('</div>', unsafe_allow_html=True)
-            return
+            return f"""
+            <div class="summary-card">
+                <div class="{header_class}">{title} <span style="font-size: 0.82rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
+                <div class="summary-table" style="display:flex; align-items:center; justify-content:center; padding:15px; color:#64748b;">
+                    No {title} data available
+                </div>
+            </div>
+            """
 
         temp_df = df.drop_duplicates(subset=["ISIN"], keep="first").copy()
         count = int(temp_df["ISIN"].nunique())
@@ -278,7 +297,6 @@ try:
         else:
             weighted_yield = 0.0
 
-        coupon_str = "N/A"
         if include_coupon:
             coupon_col = next((c for c in temp_df.columns if "coupon" in c.lower() and "freq" not in c.lower() and "date" not in c.lower()), None)
             if coupon_col:
@@ -291,33 +309,37 @@ try:
                     coupon_str = f"{weighted_coupon:.4f}%"
                 else:
                     coupon_str = "0.0000%"
+            else:
+                coupon_str = "N/A"
 
-        wrapper_open = '<div class="summary-card-wrapper">'
-        header_html = f'<div class="{header_class}">{title} <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>'
-        if include_coupon:
-            table_html = f"""
-            <table class="summary-table">
-                <thead>
-                    <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th><th>WA Coupon</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td><td>{coupon_str}</td></tr>
-                </tbody>
-            </table>
+            table_body = f"""
+                <table class="summary-table">
+                    <thead>
+                        <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th><th>WA Coupon</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td><td>{coupon_str}</td></tr>
+                    </tbody>
+                </table>
             """
         else:
-            table_html = f"""
-            <table class="summary-table">
-                <thead>
-                    <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th></tr>
-                </thead>
-                <tbody>
-                    <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td></tr>
-                </tbody>
-            </table>
+            table_body = f"""
+                <table class="summary-table">
+                    <thead>
+                        <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th></tr>
+                    </thead>
+                    <tbody>
+                        <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td></tr>
+                    </tbody>
+                </table>
             """
-        wrapper_close = '</div>'
-        st.markdown(wrapper_open + header_html + table_html + wrapper_close, unsafe_allow_html=True)
+
+        return f"""
+        <div class="summary-card">
+            <div class="{header_class}">{title} <span style="font-size: 0.82rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
+            {table_body}
+        </div>
+        """
 
     # --- MATURITY DETAILS LOGIC ---
     def compute_maturity_detail(df, base_date_str, days=30, is_bond=False):
@@ -576,13 +598,18 @@ try:
             df_latest_frtbs = pd.DataFrame()
             df_latest_bonds = pd.DataFrame()
 
-        sum_col1, sum_col2, sum_col3 = st.columns(3, gap="large")
-        with sum_col1:
-            render_summary_block(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
-        with sum_col2:
-            render_summary_block(df_latest_frtbs, latest_sec_date, "FRTBs", "frtb-header", include_coupon=True)
-        with sum_col3:
-            render_summary_block(df_latest_bonds, latest_sec_date, "Treasury Bonds", "bond-header", include_coupon=True)
+        # Render 3 summary blocks uniformly via HTML grid
+        html_card_bills = generate_summary_card_html(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
+        html_card_frtbs = generate_summary_card_html(df_latest_frtbs, latest_sec_date, "FRTBs", "frtb-header", include_coupon=True)
+        html_card_bonds = generate_summary_card_html(df_latest_bonds, latest_sec_date, "Treasury Bonds", "bond-header", include_coupon=True)
+
+        st.markdown(f"""
+            <div class="summary-grid-container">
+                {html_card_bills}
+                {html_card_frtbs}
+                {html_card_bonds}
+            </div>
+        """, unsafe_allow_html=True)
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
