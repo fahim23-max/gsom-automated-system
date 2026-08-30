@@ -54,20 +54,34 @@ def scrape_url_for_date(target_url, date_str, category_default):
         records = []
         for row in rows:
             cols = [c.get_text(strip=True) for c in row.find_all("td")]
-            if len(cols) < 14:
+            if len(cols) < 13:
                 continue
+            
+            # Dynamically grab the last column for Outstanding Balance to prevent offset mismatches
             try:
-                out_val = float(cols[13].replace(",", "").strip())
+                out_val = float(cols[-1].replace(",", "").strip())
             except Exception:
                 out_val = 0.0
 
             cat_val = "FRTB" if ("FRTB" in cols[2].upper() or "FRTB" in cols[3].upper() or category_default == "FRTB") else "BGTB"
             
             records.append({
-                "sl": cols[0], "isin": cols[1], "name": cols[2], "stype": cols[3],
-                "issue": cols[4], "mat": cols[5], "coupon": cols[6], "freq": cols[7],
-                "last_c": cols[8], "next_c": cols[9], "iprice": cols[10], "rem": cols[11],
-                "yield_": cols[12], "price": cols[10], "out": out_val, "cat": cat_val,
+                "sl": cols[0], 
+                "isin": cols[1], 
+                "name": cols[2], 
+                "stype": cols[3],
+                "issue": cols[4], 
+                "mat": cols[5], 
+                "coupon": cols[6], 
+                "freq": cols[7],
+                "last_c": cols[8], 
+                "next_c": cols[9], 
+                "iprice": cols[10], 
+                "rem": cols[11],
+                "yield_": cols[12], 
+                "price": cols[10] if len(cols) > 10 else "0", 
+                "out": out_val, 
+                "cat": cat_val,
                 "ddate": date_str,
             })
         return records
