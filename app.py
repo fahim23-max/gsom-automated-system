@@ -26,51 +26,43 @@ try:
             padding-bottom: 2.5rem;
         }
 
-        /* 3-Card Summary Flexbox Grid */
-        .summary-grid-container {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 20px;
-            width: 100%;
-            margin-bottom: 1.5rem;
-        }
-
+        /* Summary Table Styling */
         .summary-card {
-            background-color: transparent;
-            display: flex;
-            flex-direction: column;
+            background-color: #ffffff;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 0;
+            overflow: hidden;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+            margin-top: 6px;
         }
 
         .summary-table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 6px;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             background-color: #ffffff;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid #cbd5e1;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-            height: 100%;
+            margin: 0;
         }
         .summary-table th {
             background-color: #e2e8f0;
             color: #0f172a;
             font-weight: 700;
             text-align: center;
-            padding: 8px 6px;
+            padding: 8px 4px;
             border: 1px solid #cbd5e1;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             white-space: nowrap;
         }
         .summary-table td {
             text-align: center;
-            padding: 10px 6px;
+            padding: 10px 4px;
             border: 1px solid #e2e8f0;
-            font-size: 0.95rem;
+            font-size: 0.90rem;
             font-weight: 600;
             color: #0f172a;
             vertical-align: middle;
+            white-space: nowrap;
         }
 
         .bill-header { color: #dc2626; font-weight: bold; font-size: 1.05rem; margin-bottom: 4px; text-align: center; }
@@ -267,17 +259,11 @@ try:
         q = text(f'SELECT * FROM public.{table_name} WHERE "Data_Date"::DATE BETWEEN :s AND :e ORDER BY "Data_Date" DESC')
         return pd.read_sql(q, engine, params={"s": str(start_d), "e": str(end_d)})
 
-    # --- UNIFIED 3-CARD SUMMARY HTML BUILDER ---
-    def generate_summary_card_html(df, actual_date, title, header_class, include_coupon=False):
+    # --- SUMMARY BLOCK RENDERER ---
+    def render_summary_block(df, actual_date, title, header_class, include_coupon=False):
         if df.empty:
-            return f"""
-            <div class="summary-card">
-                <div class="{header_class}">{title} <span style="font-size: 0.82rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
-                <div class="summary-table" style="display:flex; align-items:center; justify-content:center; padding:15px; color:#64748b;">
-                    No {title} data available
-                </div>
-            </div>
-            """
+            st.markdown(f'<div class="{header_class}">{title} <span style="font-size:0.82rem; color:#64748b; font-weight:normal;">(as of {actual_date})</span></div><div class="summary-card" style="padding:16px; text-align:center; color:#64748b;">No data available.</div>', unsafe_allow_html=True)
+            return
 
         temp_df = df.drop_duplicates(subset=["ISIN"], keep="first").copy()
         count = int(temp_df["ISIN"].nunique())
@@ -312,34 +298,11 @@ try:
             else:
                 coupon_str = "N/A"
 
-            table_body = f"""
-                <table class="summary-table">
-                    <thead>
-                        <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th><th>WA Coupon</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td><td>{coupon_str}</td></tr>
-                    </tbody>
-                </table>
-            """
+            table_html = f'<div class="{header_class}">{title} <span style="font-size:0.82rem; color:#64748b; font-weight:normal;">(as of {actual_date})</span></div><div class="summary-card"><table class="summary-table"><thead><tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th><th>WA Coupon</th></tr></thead><tbody><tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td><td>{coupon_str}</td></tr></tbody></table></div>'
         else:
-            table_body = f"""
-                <table class="summary-table">
-                    <thead>
-                        <tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th></tr>
-                    </thead>
-                    <tbody>
-                        <tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td></tr>
-                    </tbody>
-                </table>
-            """
+            table_html = f'<div class="{header_class}">{title} <span style="font-size:0.82rem; color:#64748b; font-weight:normal;">(as of {actual_date})</span></div><div class="summary-card"><table class="summary-table"><thead><tr><th>Count</th><th>Amount (BDT Cr)</th><th>WA Yield</th></tr></thead><tbody><tr><td>{count}</td><td>৳{total_crore:,.2f} Cr</td><td>{weighted_yield:.4f}%</td></tr></tbody></table></div>'
 
-        return f"""
-        <div class="summary-card">
-            <div class="{header_class}">{title} <span style="font-size: 0.82rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>
-            {table_body}
-        </div>
-        """
+        st.markdown(table_html, unsafe_allow_html=True)
 
     # --- MATURITY DETAILS LOGIC ---
     def compute_maturity_detail(df, base_date_str, days=30, is_bond=False):
@@ -558,7 +521,6 @@ try:
 
         return match
 
-
     # ==========================================
     # --- SIDEBAR NAVIGATION ---
     # ==========================================
@@ -573,12 +535,11 @@ try:
         st.caption(f"**Latest Bill Date:** {latest_bill_date or 'N/A'}")
         st.caption(f"**Latest Bond Date:** {latest_sec_date or 'N/A'}")
 
-
     # ==========================================
     # --- 1. LATEST MARKET SUMMARY (DEFAULT) ---
     # ==========================================
     if menu_selection == "📊 Latest Market Summary":
-        st.markdown(f"""
+        st.markdown("""
             <div style="margin-bottom: 1.5rem; text-align: center;">
                 <h2 style="margin-bottom: 0; text-align: center;">🏛️ GSOM Daily</h2>
                 <p style="color:#64748b; font-size:1.05rem; margin-top:0.35rem; text-align: center;">
@@ -598,18 +559,14 @@ try:
             df_latest_frtbs = pd.DataFrame()
             df_latest_bonds = pd.DataFrame()
 
-        # Render 3 summary blocks uniformly via HTML grid
-        html_card_bills = generate_summary_card_html(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
-        html_card_frtbs = generate_summary_card_html(df_latest_frtbs, latest_sec_date, "FRTBs", "frtb-header", include_coupon=True)
-        html_card_bonds = generate_summary_card_html(df_latest_bonds, latest_sec_date, "Treasury Bonds", "bond-header", include_coupon=True)
-
-        st.markdown(f"""
-            <div class="summary-grid-container">
-                {html_card_bills}
-                {html_card_frtbs}
-                {html_card_bonds}
-            </div>
-        """, unsafe_allow_html=True)
+        # Render 3 summary blocks uniformly via Streamlit columns with built-in medium gaps
+        sum_col1, sum_col2, sum_col3 = st.columns(3, gap="medium")
+        with sum_col1:
+            render_summary_block(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
+        with sum_col2:
+            render_summary_block(df_latest_frtbs, latest_sec_date, "FRTBs", "frtb-header", include_coupon=True)
+        with sum_col3:
+            render_summary_block(df_latest_bonds, latest_sec_date, "Treasury Bonds", "bond-header", include_coupon=True)
 
         st.markdown("<hr style='margin: 18px 0; border: 0; border-top: 1px solid #e2e8f0;'>", unsafe_allow_html=True)
 
@@ -718,7 +675,6 @@ try:
                 )
             else:
                 st.info("No Securities data available.")
-
 
     # ==========================================
     # --- 2. ANALYTICS & GAP LADDER ---
@@ -914,7 +870,6 @@ try:
                                     st.info(f"No {d_inst} recorded as {d_event} in {d_month}.")
                     else:
                         st.info("No records found in this range.")
-
 
     # ==========================================
     # --- 3. HISTORICAL DATA EXPORT ---
