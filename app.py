@@ -26,6 +26,11 @@ try:
             padding-bottom: 2.5rem;
         }
         
+        /* Added spacing gap between summary layout columns */
+        [data-testid="stHorizontalBlock"] > [data-testid="column"]:not(:last-child) {
+            padding-right: 1.5rem !important;
+        }
+        
         /* Isolated Scrollable Container for Side-by-Side Tables */
         .table-container-card {
             background-color: #ffffff;
