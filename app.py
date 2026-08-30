@@ -25,15 +25,12 @@ try:
             padding-top: 1.5rem;
             padding-bottom: 2.5rem;
         }
-        
-        /* Force clean spacing and gaps between the 3 summary columns */
-        div[data-testid="column"] {
-            padding-right: 1.25rem !important;
+
+        /* Summary Wrapper with Guaranteed Margins */
+        .summary-card-wrapper {
+            margin: 0 8px 14px 8px;
         }
-        div[data-testid="column"]:last-child {
-            padding-right: 0 !important;
-        }
-        
+
         /* Isolated Scrollable Container for Side-by-Side Tables */
         .table-container-card {
             background-color: #ffffff;
@@ -258,8 +255,9 @@ try:
     # --- SUMMARY BLOCK RENDERER ---
     def render_summary_block(df, actual_date, title, header_class, include_coupon=False):
         if df.empty:
-            st.markdown(f'<div class="{header_class}">{title}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="summary-card-wrapper"><div class="{header_class}">{title}</div>', unsafe_allow_html=True)
             st.info(f"No {title} data available for {actual_date}.")
+            st.markdown('</div>', unsafe_allow_html=True)
             return
 
         temp_df = df.drop_duplicates(subset=["ISIN"], keep="first").copy()
@@ -294,6 +292,7 @@ try:
                 else:
                     coupon_str = "0.0000%"
 
+        wrapper_open = '<div class="summary-card-wrapper">'
         header_html = f'<div class="{header_class}">{title} <span style="font-size: 0.85rem; color: #64748b; font-weight: normal;">(as of {actual_date})</span></div>'
         if include_coupon:
             table_html = f"""
@@ -317,7 +316,8 @@ try:
                 </tbody>
             </table>
             """
-        st.markdown(header_html + table_html, unsafe_allow_html=True)
+        wrapper_close = '</div>'
+        st.markdown(wrapper_open + header_html + table_html + wrapper_close, unsafe_allow_html=True)
 
     # --- MATURITY DETAILS LOGIC ---
     def compute_maturity_detail(df, base_date_str, days=30, is_bond=False):
@@ -576,7 +576,7 @@ try:
             df_latest_frtbs = pd.DataFrame()
             df_latest_bonds = pd.DataFrame()
 
-        sum_col1, sum_col2, sum_col3 = st.columns(3)
+        sum_col1, sum_col2, sum_col3 = st.columns(3, gap="large")
         with sum_col1:
             render_summary_block(df_latest_bills, latest_bill_date, "Treasury Bills", "bill-header", include_coupon=False)
         with sum_col2:
@@ -591,7 +591,7 @@ try:
         bills_mat, bills_mat_cr, bills_mat_cnt = compute_maturity_detail(df_latest_bills, latest_bill_date, days=30, is_bond=False)
         secs_mat, secs_mat_cr, secs_mat_cnt = compute_maturity_detail(df_latest_secs, latest_sec_date, days=30, is_bond=True)
 
-        mat_col1, mat_col2 = st.columns(2)
+        mat_col1, mat_col2 = st.columns(2, gap="large")
         with mat_col1:
             st.markdown(f"""
                 <div class="custom-metric-card bill-card">
@@ -654,7 +654,7 @@ try:
                 st.dataframe(
                     disp_b.style.format(format_dict_b, na_rep="-"),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.info("No T-Bill data available.")
@@ -687,7 +687,7 @@ try:
                 st.dataframe(
                     disp_s.style.format(format_dict_s, na_rep="-"),
                     hide_index=True,
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
                 st.info("No Securities data available.")
@@ -714,7 +714,7 @@ try:
             df_latest_bills = load_snapshot("daily_bills", latest_bill_date)
             df_latest_secs = load_snapshot("daily_securities", latest_sec_date)
 
-            col_lad1, col_lad2 = st.columns(2)
+            col_lad1, col_lad2 = st.columns(2, gap="large")
             with col_lad1:
                 st.markdown(f"<div style='text-align:center; font-weight:700; color:#0f172a; margin-bottom:6px;'>Treasury Bills Ladder <span style='font-weight:normal; color:#64748b;'>(as of {latest_bill_date})</span></div>", unsafe_allow_html=True)
                 bill_ladder = compute_maturity_ladder(df_latest_bills, latest_bill_date)
