@@ -26,9 +26,12 @@ try:
             padding-bottom: 2.5rem;
         }
         
-        /* Added spacing gap between summary layout columns */
-        [data-testid="stHorizontalBlock"] > [data-testid="column"]:not(:last-child) {
-            padding-right: 1.5rem !important;
+        /* Force clean spacing and gaps between the 3 summary columns */
+        div[data-testid="column"] {
+            padding-right: 1.25rem !important;
+        }
+        div[data-testid="column"]:last-child {
+            padding-right: 0 !important;
         }
         
         /* Isolated Scrollable Container for Side-by-Side Tables */
