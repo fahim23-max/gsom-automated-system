@@ -27,7 +27,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Bond & FRTB Scraper
-        run: python scraper_bonds.py
+        run: python scraper.py
 
       - name: Run T-Bill Scraper
         run: python scraper_bills.py
