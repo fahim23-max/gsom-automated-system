@@ -36,7 +36,6 @@ UPSERT_SQL = text("""
 """)
 
 def get_existing_periods():
-    """Queries the database to skip monthly periods that already exist."""
     with engine.connect() as conn:
         res = conn.execute(text('SELECT DISTINCT "Data_Period" FROM public.treasury_monthly_data'))
         return set(row[0] for row in res.fetchall())
@@ -97,7 +96,7 @@ def parse_treasury_table(html_text, month_str, year_str):
 
 def main():
     existing_periods = get_existing_periods()
-    print(f"Found {len(existing_periods)} existing periods in Supabase DB. Skipping duplicates...", flush=True)
+    print(f"Found {len(existing_periods)} existing periods in DB. Skipping duplicates...", flush=True)
 
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     current_date = datetime.now()
@@ -117,30 +116,46 @@ def main():
         print("All monthly data for the past 10 years is already stored in the database.", flush=True)
         return
 
-    print(f"Starting Playwright historical scraper for {len(target_tasks)} periods...", flush=True)
+    print(f"Starting stealth Playwright scraper for {len(target_tasks)} periods...", flush=True)
 
     total_rows = 0
     completed = 0
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        # Launch browser with arguments to disable automation flags that trigger Radware TSPD
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--no-sandbox",
+                "--disable-setuid-sandbox"
+            ]
+        )
+        
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080}
+        )
+        
+        page = context.new_page()
+        
+        # Open base URL and wait for Radware script/cookie challenge to resolve
         page.goto(TREASURY_URL, timeout=60000)
+        page.wait_for_timeout(4000) # Allow security fingerprint script to execute
 
         for month_name, year_str in target_tasks:
             completed += 1
             dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
-            picker_value = dt.strftime("%B, %Y") # e.g., "January, 2020"
+            picker_value = dt.strftime("%B, %Y")
             period_label = f"{month_name} {year_str}"
 
             try:
-                # Clear and type the date into the datepicker input field
+                # Type the date and submit
                 page.locator("input.datepicker-here").fill("")
                 page.locator("input.datepicker-here").type(picker_value)
                 
-                # Click submit button and wait for network/table update
                 page.locator("input[name='submit'], button[type='submit']").click()
-                page.wait_for_timeout(2000) # Give it 2 seconds to render results
+                page.wait_for_timeout(3000) # Wait for table update
 
                 html_content = page.content()
                 records = parse_treasury_table(html_content, month_name, year_str)
