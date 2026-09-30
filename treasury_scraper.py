@@ -115,7 +115,7 @@ def main():
         print("All monthly data for the past 10 years is already stored in the database.", flush=True)
         return
 
-    print(f"Starting anti-bot compliant Playwright scraper for {len(target_tasks)} periods...", flush=True)
+    print(f"Starting JavaScript-aware Playwright scraper for {len(target_tasks)} periods...", flush=True)
 
     total_rows = 0
     completed = 0
@@ -136,32 +136,38 @@ def main():
         )
         
         page = context.new_page()
-        
-        # 1. Navigate and wait for network idle to let TSPD challenge script run completely
         page.goto(TREASURY_URL, timeout=60000)
         page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(5000) # Extra buffer for anti-bot cookie initialization
+        page.wait_for_timeout(4000)
 
         for month_name, year_str in target_tasks:
             completed += 1
             dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
-            picker_value = dt.strftime("%B, %Y")
+            picker_value = dt.strftime("%B, %Y") # e.g., "September, 2026"
             period_label = f"{month_name} {year_str}"
 
             try:
-                # 2. Ensure date picker input is ready and interact with it like a user
-                date_input = page.locator("input.datepicker-here")
-                date_input.wait_for(state="visible", timeout=10000)
-                date_input.click()
-                date_input.fill("")
-                date_input.type(picker_value, delay=100) # Type slowly to trigger UI bindings
+                # Directly set value via JavaScript and fire native input/change events
+                page.evaluate(f"""
+                    const input = document.querySelector('input.datepicker-here');
+                    if (input) {{
+                        input.value = "{picker_value}";
+                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        input.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                """)
                 
-                # 3. Click submit and wait for response network update
+                page.wait_for_timeout(1000)
+
+                # Click submit button
                 submit_btn = page.locator("input[name='submit'], button[type='submit']")
-                submit_btn.click()
-                
-                # Wait for the table container or network activity to finish rendering results
-                page.wait_for_timeout(4000)
+                if submit_btn.count() > 0:
+                    submit_btn.first.click()
+                else:
+                    # Fallback to form submit via JS if button selector varies
+                    page.evaluate("document.querySelector('form').submit();")
+
+                page.wait_for_timeout(3000)
 
                 html_content = page.content()
                 records = parse_treasury_table(html_content, month_name, year_str)
