@@ -26,3 +26,9 @@ jobs:
           
       - name: Run Monthly Treasury Scraper
         run: python treasury_scraper.py
+- name: Upload debug snapshot
+  if: always()
+  uses: actions/upload-artifact@v4
+  with:
+    name: treasury-debug
+    path: debug_output/
