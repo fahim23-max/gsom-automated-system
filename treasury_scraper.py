@@ -1,5 +1,4 @@
 import os
-import time
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, text
@@ -116,13 +115,12 @@ def main():
         print("All monthly data for the past 10 years is already stored in the database.", flush=True)
         return
 
-    print(f"Starting stealth Playwright scraper for {len(target_tasks)} periods...", flush=True)
+    print(f"Starting anti-bot compliant Playwright scraper for {len(target_tasks)} periods...", flush=True)
 
     total_rows = 0
     completed = 0
 
     with sync_playwright() as p:
-        # Launch browser with arguments to disable automation flags that trigger Radware TSPD
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -139,9 +137,10 @@ def main():
         
         page = context.new_page()
         
-        # Open base URL and wait for Radware script/cookie challenge to resolve
+        # 1. Navigate and wait for network idle to let TSPD challenge script run completely
         page.goto(TREASURY_URL, timeout=60000)
-        page.wait_for_timeout(4000) # Allow security fingerprint script to execute
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(5000) # Extra buffer for anti-bot cookie initialization
 
         for month_name, year_str in target_tasks:
             completed += 1
@@ -150,12 +149,19 @@ def main():
             period_label = f"{month_name} {year_str}"
 
             try:
-                # Type the date and submit
-                page.locator("input.datepicker-here").fill("")
-                page.locator("input.datepicker-here").type(picker_value)
+                # 2. Ensure date picker input is ready and interact with it like a user
+                date_input = page.locator("input.datepicker-here")
+                date_input.wait_for(state="visible", timeout=10000)
+                date_input.click()
+                date_input.fill("")
+                date_input.type(picker_value, delay=100) # Type slowly to trigger UI bindings
                 
-                page.locator("input[name='submit'], button[type='submit']").click()
-                page.wait_for_timeout(3000) # Wait for table update
+                # 3. Click submit and wait for response network update
+                submit_btn = page.locator("input[name='submit'], button[type='submit']")
+                submit_btn.click()
+                
+                # Wait for the table container or network activity to finish rendering results
+                page.wait_for_timeout(4000)
 
                 html_content = page.content()
                 records = parse_treasury_table(html_content, month_name, year_str)
