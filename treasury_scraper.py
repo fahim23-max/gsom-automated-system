@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, text
@@ -17,27 +18,41 @@ engine = create_engine(
     max_overflow=6,
 )
 
+# NOTE: adds two columns beyond the original schema - Issue_Date (the real
+# per-security auction date, since a single month can contain several
+# distinct issue dates) and Standard_Devolvement_Yield (the 14th column,
+# present for bonds, usually blank for T-Bills). Run this once before using
+# the script, if these columns don't already exist:
+#
+#   ALTER TABLE public.treasury_monthly_data
+#     ADD COLUMN IF NOT EXISTS "Issue_Date" TEXT,
+#     ADD COLUMN IF NOT EXISTS "Standard_Devolvement_Yield" TEXT;
 UPSERT_SQL = text("""
-    INSERT INTO public.treasury_monthly_data 
-    ("Month", "Year", "ISIN", "Securities_Name", "Tenor", "Bids_Received", 
-     "Face_Value_Received", "Range_Yields_Received", "Bids_Accepted", 
-     "Face_Value_Accepted", "Sale_Value", "Range_Yields_Accepted", 
-     "Weighted_Avg_Price", "Cut_Off_Yield", "Data_Period")
-    VALUES (:month, :year, :isin, :name, :tenor, :bids_rec, :fv_rec, 
-            :range_rec, :bids_acc, :fv_acc, :sale_val, :range_acc, 
-            :waprice, :cutoff, :period)
+    INSERT INTO public.treasury_monthly_data
+    ("Month", "Year", "ISIN", "Securities_Name", "Tenor", "Bids_Received",
+     "Face_Value_Received", "Range_Yields_Received", "Bids_Accepted",
+     "Face_Value_Accepted", "Sale_Value", "Range_Yields_Accepted",
+     "Weighted_Avg_Price", "Cut_Off_Yield", "Data_Period",
+     "Issue_Date", "Standard_Devolvement_Yield")
+    VALUES (:month, :year, :isin, :name, :tenor, :bids_rec, :fv_rec,
+            :range_rec, :bids_acc, :fv_acc, :sale_val, :range_acc,
+            :waprice, :cutoff, :period, :issue_date, :std_devol)
     ON CONFLICT ("ISIN", "Data_Period") DO UPDATE SET
         "Face_Value_Accepted" = EXCLUDED."Face_Value_Accepted",
         "Sale_Value" = EXCLUDED."Sale_Value",
         "Cut_Off_Yield" = EXCLUDED."Cut_Off_Yield",
         "Weighted_Avg_Price" = EXCLUDED."Weighted_Avg_Price",
-        "Bids_Accepted" = EXCLUDED."Bids_Accepted";
+        "Bids_Accepted" = EXCLUDED."Bids_Accepted",
+        "Issue_Date" = EXCLUDED."Issue_Date",
+        "Standard_Devolvement_Yield" = EXCLUDED."Standard_Devolvement_Yield";
 """)
+
 
 def get_existing_periods():
     with engine.connect() as conn:
         res = conn.execute(text('SELECT DISTINCT "Data_Period" FROM public.treasury_monthly_data'))
         return set(row[0] for row in res.fetchall())
+
 
 def upsert_records(records):
     if not records:
@@ -45,53 +60,89 @@ def upsert_records(records):
     with engine.begin() as conn:
         conn.execute(UPSERT_SQL, records)
 
-def parse_treasury_table(html_text, month_str, year_str):
-    soup = BeautifulSoup(html_text, 'html.parser')
-    table = soup.find("table", {"class": "table"})
-    if not table:
-        tables = soup.find_all("table")
-        table = tables[0] if tables else None
 
-    if not table or not table.find("tbody"):
+ISIN_RE = re.compile(r"^(\S+)\s*(.*)$")
+
+
+def split_isin(raw):
+    """'BD0929441204 (Re-issuance: 2.73 Yr.)' -> ('BD0929441204', '(Re-issuance: 2.73 Yr.)')"""
+    raw = raw.strip()
+    m = ISIN_RE.match(raw)
+    if not m:
+        return raw, ""
+    return m.group(1), m.group(2).strip()
+
+
+def to_float(val):
+    try:
+        return float(val.replace(",", "").strip())
+    except Exception:
+        return 0.0
+
+
+def parse_treasury_table(html_text, month_str, year_str):
+    """
+    Confirmed table layout (14 columns, 2-row header):
+      [0]  Issue date
+      [1]  ISIN Number (may include a re-issuance note in parentheses)
+      [2]  Remaining Maturity (aprx)
+      [3]  Tenor and name
+      [4]  Bids received - No of bids
+      [5]  Bids received - Face value (Cr.Tk.)
+      [6]  Bids received - Range of yields (%)
+      [7]  Bids accepted - No of bids
+      [8]  Bids accepted - Face value (Cr.Tk.)
+      [9]  Bids accepted - Sale value (Cr.Tk.)
+      [10] Bids accepted - Range of yields (%)
+      [11] Bids accepted - Weighted average Price (taka)
+      [12] Bids accepted - Cut off yield (%)
+      [13] Bids accepted - Standard/Devolvement Yield (%) (often blank for T-Bills)
+    """
+    soup = BeautifulSoup(html_text, 'html.parser')
+    table = soup.find("table")
+    if not table:
         return []
 
-    rows = table.find("tbody").find_all("tr")
+    tbody = table.find("tbody")
+    rows = tbody.find_all("tr") if tbody else table.find_all("tr")[1:]
+
     records = []
     period_tag = f"{month_str}-{year_str}"
 
     for row in rows:
         cols = [c.get_text(strip=True) for c in row.find_all("td")]
-        if len(cols) < 10:
+        if len(cols) < 14:
             continue
-        
-        try:
-            fv_acc = float(cols[9].replace(",", "").strip()) if cols[9] else 0.0
-        except Exception:
-            fv_acc = 0.0
 
-        try:
-            sale_val = float(cols[10].replace(",", "").strip()) if len(cols) > 10 and cols[10] else 0.0
-        except Exception:
-            sale_val = 0.0
+        isin_clean, reissue_note = split_isin(cols[1])
+        tenor_remaining = cols[2]
+        tenor_name = cols[3]
+        # Keep the re-issuance note visible in the name field, since it's
+        # genuinely useful context, without letting it corrupt the ISIN
+        # used for ON CONFLICT matching.
+        display_name = f"{tenor_name} {reissue_note}".strip() if reissue_note else tenor_name
 
         records.append({
             "month": month_str,
             "year": int(year_str),
-            "isin": cols[1] if len(cols) > 1 else "",
-            "name": cols[3] if len(cols) > 3 else "",
-            "tenor": cols[2] if len(cols) > 2 else "",
-            "bids_rec": cols[4] if len(cols) > 4 else "",
-            "fv_rec": 0.0,
-            "range_rec": "",
-            "bids_acc": cols[5] if len(cols) > 5 else "",
-            "fv_acc": fv_acc,
-            "sale_val": sale_val,
-            "range_acc": cols[11] if len(cols) > 11 else "",
-            "waprice": 0.0,
-            "cutoff": 0.0,
-            "period": period_tag
+            "isin": isin_clean,
+            "name": display_name,
+            "tenor": tenor_remaining,
+            "bids_rec": cols[4],
+            "fv_rec": to_float(cols[5]),
+            "range_rec": cols[6],
+            "bids_acc": cols[7],
+            "fv_acc": to_float(cols[8]),
+            "sale_val": to_float(cols[9]),
+            "range_acc": cols[10],
+            "waprice": to_float(cols[11]),
+            "cutoff": to_float(cols[12]),
+            "period": period_tag,
+            "issue_date": cols[0],
+            "std_devol": cols[13] if len(cols) > 13 else "",
         })
     return records
+
 
 def main():
     existing_periods = get_existing_periods()
@@ -100,22 +151,23 @@ def main():
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     current_date = datetime.now()
     target_tasks = []
-    
-    for i in range(120): # Past 10 years
+    seen = set()
+
+    for i in range(120):  # past 10 years
         d = current_date - timedelta(days=30 * i)
         m_str = months[d.month - 1]
         y_str = str(d.year)
         period_key = f"{m_str}-{y_str}"
-        
-        if period_key not in existing_periods:
-            if (m_str, y_str) not in target_tasks:
-                target_tasks.append((m_str, y_str))
+
+        if period_key not in existing_periods and period_key not in seen:
+            target_tasks.append((m_str, y_str))
+            seen.add(period_key)
 
     if not target_tasks:
         print("All monthly data for the past 10 years is already stored in the database.", flush=True)
         return
 
-    print(f"Starting JavaScript-aware Playwright scraper for {len(target_tasks)} periods...", flush=True)
+    print(f"Starting Playwright scraper for {len(target_tasks)} periods...", flush=True)
 
     total_rows = 0
     completed = 0
@@ -123,31 +175,25 @@ def main():
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-setuid-sandbox"
-            ]
+            args=["--disable-blink-features=AutomationControlled", "--no-sandbox", "--disable-setuid-sandbox"],
         )
-        
         context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            viewport={"width": 1920, "height": 1080}
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                       "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            viewport={"width": 1920, "height": 1080},
         )
-        
         page = context.new_page()
         page.goto(TREASURY_URL, timeout=60000)
         page.wait_for_load_state("networkidle")
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(2000)
 
         for month_name, year_str in target_tasks:
             completed += 1
             dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
-            picker_value = dt.strftime("%B, %Y") # e.g., "September, 2026"
+            picker_value = dt.strftime("%B, %Y")  # e.g. "September, 2026" - confirmed working format
             period_label = f"{month_name} {year_str}"
 
             try:
-                # Directly set value via JavaScript and fire native input/change events
                 page.evaluate(f"""
                     const input = document.querySelector('input.datepicker-here');
                     if (input) {{
@@ -156,18 +202,16 @@ def main():
                         input.dispatchEvent(new Event('change', {{ bubbles: true }}));
                     }}
                 """)
-                
-                page.wait_for_timeout(1000)
+                page.wait_for_timeout(800)
 
-                # Click submit button
                 submit_btn = page.locator("input[name='submit'], button[type='submit']")
                 if submit_btn.count() > 0:
                     submit_btn.first.click()
                 else:
-                    # Fallback to form submit via JS if button selector varies
-                    page.evaluate("document.querySelector('form').submit();")
+                    page.evaluate("document.querySelector('form#search-form').submit();")
 
-                page.wait_for_timeout(3000)
+                page.wait_for_load_state("networkidle", timeout=20000)
+                page.wait_for_timeout(1000)
 
                 html_content = page.content()
                 records = parse_treasury_table(html_content, month_name, year_str)
@@ -185,6 +229,7 @@ def main():
         browser.close()
 
     print(f"\nFINISHED! Synced a total of {total_rows} records across all historical months.", flush=True)
+
 
 if __name__ == "__main__":
     main()
