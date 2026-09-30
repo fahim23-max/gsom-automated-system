@@ -26,8 +26,22 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Install Playwright browser (required for Treasury scraper)
+        run: playwright install --with-deps chromium
+
       - name: Run Bond & FRTB Scraper
         run: python scraper.py
 
       - name: Run T-Bill Scraper
         run: python scraper_bills.py
+
+      - name: Run Treasury Monthly Scraper (current + previous month)
+        run: python scraper_treasury_daily.py
+
+      - name: Upload Treasury debug snapshot (only on failure/empty)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: treasury-daily-debug
+          path: debug_output/
+          if-no-files-found: ignore
