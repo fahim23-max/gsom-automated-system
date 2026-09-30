@@ -1,22 +1,16 @@
 import os
 import time
-import threading
-import concurrent.futures
 from datetime import datetime, timedelta
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 from bs4 import BeautifulSoup
 from sqlalchemy import create_engine, text
+from playwright.sync_api import sync_playwright
 
-# Target URL for monthly treasury/monetary activity data
 TREASURY_URL = "https://www.bb.org.bd/en/index.php/monetaryactivity/treasury"
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL secret is missing!")
 
-# Database connection pool scaled for 6+ worker threads
 engine = create_engine(
     DATABASE_URL,
     connect_args={'prepare_threshold': None},
@@ -24,7 +18,6 @@ engine = create_engine(
     max_overflow=6,
 )
 
-# UPSERT statement mapping to your Supabase treasury_monthly_data table schema
 UPSERT_SQL = text("""
     INSERT INTO public.treasury_monthly_data 
     ("Month", "Year", "ISIN", "Securities_Name", "Tenor", "Bids_Received", 
@@ -42,24 +35,6 @@ UPSERT_SQL = text("""
         "Bids_Accepted" = EXCLUDED."Bids_Accepted";
 """)
 
-thread_local = threading.local()
-
-def get_session():
-    """Provides a thread-isolated Session object with robust connection retries."""
-    if not hasattr(thread_local, "session"):
-        session = requests.Session()
-        retry_strategy = Retry(
-            total=5,
-            backoff_factor=1.5,
-            status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods=["POST", "GET"]
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy, pool_connections=10, pool_maxsize=10)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        thread_local.session = session
-    return thread_local.session
-
 def get_existing_periods():
     """Queries the database to skip monthly periods that already exist."""
     with engine.connect() as conn:
@@ -73,10 +48,7 @@ def upsert_records(records):
         conn.execute(UPSERT_SQL, records)
 
 def parse_treasury_table(html_text, month_str, year_str):
-    """Parses the HTML table rows for the given month and year."""
     soup = BeautifulSoup(html_text, 'html.parser')
-    
-    # Locate the target table
     table = soup.find("table", {"class": "table"})
     if not table:
         tables = soup.find_all("table")
@@ -123,48 +95,15 @@ def parse_treasury_table(html_text, month_str, year_str):
         })
     return records
 
-def scrape_month_worker(period_tuple):
-    """Worker function to fetch data for a specific month and year via POST request."""
-    month_name, year_str = period_tuple
-    session = get_session()
-    
-    # Format date to match data-date-format="MM, yyyy" (e.g., "January, 2020")
-    dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
-    picker_value = dt.strftime("%B, %Y")
-    
-    payload = {
-        "date_picker": picker_value,
-        "submit": "Submit"
-    }
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Referer": TREASURY_URL
-    }
-
-    try:
-        time.sleep(0.2)  # Micro-throttle to prevent socket saturation
-        resp = session.post(TREASURY_URL, data=payload, headers=headers, timeout=30)
-        if resp.status_code == 200:
-            records = parse_treasury_table(resp.text, month_name, year_str)
-            if records:
-                upsert_records(records)
-                return f"{month_name} {year_str}", len(records)
-    except Exception as e:
-        print(f"[ERROR] {month_name} {year_str}: {e}", flush=True)
-
-    return f"{month_name} {year_str}", 0
-
 def main():
     existing_periods = get_existing_periods()
     print(f"Found {len(existing_periods)} existing periods in Supabase DB. Skipping duplicates...", flush=True)
 
     months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-    
     current_date = datetime.now()
     target_tasks = []
     
-    # Generate past 10 years of month-year combinations (120 months)
-    for i in range(120):
+    for i in range(120): # Past 10 years
         d = current_date - timedelta(days=30 * i)
         m_str = months[d.month - 1]
         y_str = str(d.year)
@@ -178,22 +117,45 @@ def main():
         print("All monthly data for the past 10 years is already stored in the database.", flush=True)
         return
 
-    NUM_WORKERS = 6
-    print(f"Starting historical monthly ingestion for {len(target_tasks)} periods using {NUM_WORKERS} concurrent workers...", flush=True)
+    print(f"Starting Playwright historical scraper for {len(target_tasks)} periods...", flush=True)
 
     total_rows = 0
     completed = 0
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=NUM_WORKERS) as executor:
-        futures = {executor.submit(scrape_month_worker, task): task for task in target_tasks}
-        for future in concurrent.futures.as_completed(futures):
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.goto(TREASURY_URL, timeout=60000)
+
+        for month_name, year_str in target_tasks:
             completed += 1
-            period_label, row_count = future.result()
-            if row_count > 0:
-                total_rows += row_count
-                print(f"[{completed}/{len(target_tasks)}] [OK] {period_label} -> +{row_count} records", flush=True)
-            else:
-                print(f"[{completed}/{len(target_tasks)}] [SKIP/EMPTY] {period_label}", flush=True)
+            dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
+            picker_value = dt.strftime("%B, %Y") # e.g., "January, 2020"
+            period_label = f"{month_name} {year_str}"
+
+            try:
+                # Clear and type the date into the datepicker input field
+                page.locator("input.datepicker-here").fill("")
+                page.locator("input.datepicker-here").type(picker_value)
+                
+                # Click submit button and wait for network/table update
+                page.locator("input[name='submit'], button[type='submit']").click()
+                page.wait_for_timeout(2000) # Give it 2 seconds to render results
+
+                html_content = page.content()
+                records = parse_treasury_table(html_content, month_name, year_str)
+
+                if records:
+                    upsert_records(records)
+                    total_rows += len(records)
+                    print(f"[{completed}/{len(target_tasks)}] [OK] {period_label} -> +{len(records)} records", flush=True)
+                else:
+                    print(f"[{completed}/{len(target_tasks)}] [SKIP/EMPTY] {period_label}", flush=True)
+
+            except Exception as e:
+                print(f"[{completed}/{len(target_tasks)}] [ERROR] {period_label}: {e}", flush=True)
+
+        browser.close()
 
     print(f"\nFINISHED! Synced a total of {total_rows} records across all historical months.", flush=True)
 
