@@ -6,29 +6,33 @@ on:
 jobs:
   treasury_backfill:
     runs-on: ubuntu-latest
-    
+
     env:
       DATABASE_URL: ${{ secrets.DATABASE_URL }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          
+
       - name: Upgrade pip and install dependencies
         run: |
           python -m pip install --no-cache-dir --upgrade pip
-          pip install --no-cache-dir requests beautifulsoup4 sqlalchemy "psycopg[binary]" pandas openpyxl lxml streamlit
-          
+          pip install --no-cache-dir requests beautifulsoup4 sqlalchemy "psycopg[binary]" pandas openpyxl lxml streamlit playwright
+
+      - name: Install Playwright browser (with system deps)
+        run: playwright install --with-deps chromium
+
       - name: Run Monthly Treasury Scraper
         run: python treasury_scraper.py
-- name: Upload debug snapshot
-  if: always()
-  uses: actions/upload-artifact@v4
-  with:
-    name: treasury-debug
-    path: debug_output/
+
+      - name: Upload debug snapshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: treasury-debug
+          path: debug_output/
