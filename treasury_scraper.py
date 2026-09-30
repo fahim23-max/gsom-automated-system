@@ -128,10 +128,12 @@ def scrape_month_worker(period_tuple):
     month_name, year_str = period_tuple
     session = get_session()
     
-    # Payload keys mapping to Bangladesh Bank's form fields (adjust names if inspected values differ)
+    # Format date to match data-date-format="MM, yyyy" (e.g., "January, 2020")
+    dt = datetime.strptime(f"{month_name} {year_str}", "%b %Y")
+    picker_value = dt.strftime("%B, %Y")
+    
     payload = {
-        "month": month_name,
-        "year": year_str,
+        "date_picker": picker_value,
         "submit": "Submit"
     }
     headers = {
